@@ -868,23 +868,37 @@ function startCollector(options) {
       });
       if (stopped) return;
       if (!anchored && captured) {
+        // Update the in-memory anchor so watch ticks can keep using the
+        // todayOnly fast path (one spawn instead of three). But do NOT persist
+        // a zero-totalTokens today to disk: an empty today is almost always
+        // transient (a tokscale blip, a locked session file, or the first
+        // cross-midnight scan before any activity that day), and a persisted
+        // zero-today anchor would lock every later restart's anchored ticks to
+        // a zero baseline - zeroing the display or double-counting usage. The
+        // next non-empty full scan overwrites the file with a real baseline.
         anchor = { dateKey: todayKey, today: captured.windowsPeriods.today, month: captured.windowsPeriods.month, allTime: captured.windowsPeriods.allTime };
         wslAnchor = captured.wslBundle;
         wslStatusAnchor = captured.wslStatus || null;
         lastFullScanAt = Date.now();
-        try {
-          fs.mkdirSync(path.dirname(anchorPath), { recursive: true });
-          fs.writeFileSync(anchorPath, JSON.stringify({
-            dateKey: anchor.dateKey,
-            today: anchor.today,
-            month: anchor.month,
-            allTime: anchor.allTime,
-            wslBundle: wslAnchor,
-            wslStatus: wslStatusAnchor,
-            configFingerprint: configFingerprint(clients, allTimeSince),
-            fullScanAt: new Date().toISOString()
-          }));
-        } catch (_) {}
+        const scannedToday = captured.windowsPeriods.today;
+        const hasTodayUsage = Number(scannedToday?.totalTokens) > 0;
+        if (hasTodayUsage) {
+          try {
+            fs.mkdirSync(path.dirname(anchorPath), { recursive: true });
+            fs.writeFileSync(anchorPath, JSON.stringify({
+              dateKey: anchor.dateKey,
+              today: anchor.today,
+              month: anchor.month,
+              allTime: anchor.allTime,
+              wslBundle: wslAnchor,
+              wslStatus: wslStatusAnchor,
+              configFingerprint: configFingerprint(clients, allTimeSince),
+              fullScanAt: new Date().toISOString()
+            }));
+          } catch (_) {}
+        } else if (typeof log === 'function') {
+          log('full scan returned empty today; keeping in-memory anchor but skipping disk persist to avoid locking a zero baseline');
+        }
       } else if (anchored && refreshWsl && captured) {
         // Interval anchored ticks refresh WSL independently; update the
         // frozen snapshot so subsequent watch ticks see the fresh data.

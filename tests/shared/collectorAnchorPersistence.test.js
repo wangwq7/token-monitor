@@ -459,6 +459,68 @@ test('cross-day anchor invalidation: stale dateKey triggers full scan', async ()
   }
 });
 
+test('a full scan that returns an empty today must not poison the anchor with today=0', async () => {
+  // Regression: a full scan whose --today comes back empty (e.g. a tokscale
+  // blip, a locked session file, or the first cross-midnight scan before any
+  // activity that day) used to write today=0 into the anchor. Every later
+  // anchored tick then derived month/allTime against a zero today baseline,
+  // which either zeroed the display or double-counted usage. An empty today is
+  // almost certainly transient, so the anchor must not be persisted from it -
+  // keep the previous anchor (or none) and let the next tick re-scan.
+  const tmpShared = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-empty-today-'));
+  const childProcess = require('node:child_process');
+  const originalSpawn = childProcess.spawn;
+  childProcess.spawn = () => {
+    const { EventEmitter } = require('node:events');
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = { end: () => {} };
+    child.kill = () => {};
+    setImmediate(() => {
+      // All three period scans return empty - today is genuinely 0 this tick.
+      child.stdout.emit('data', Buffer.from(JSON.stringify({ entries: [] })));
+      child.emit('close', 0);
+    });
+    return child;
+  };
+
+  const originalSharedDir = process.env.TOKEN_MONITOR_SHARED_DIR;
+  process.env.TOKEN_MONITOR_SHARED_DIR = tmpShared;
+  let handle;
+  try {
+    const { startCollector } = freshCollector();
+    const updates = [];
+    handle = startCollector({
+      ...baseOptions,
+      intervalMs: 60 * 60 * 1000,
+      watchEnabled: false,
+      onUpdate: (summary) => updates.push(summary)
+    });
+    await waitForCondition(() => updates.length === 1);
+    handle.stop();
+
+    const anchorPath = path.join(tmpShared, 'collector-anchor.json');
+    const exists = fs.existsSync(anchorPath);
+    // The anchor must either not be written, or if written, today must not be
+    // the empty/zero snapshot. A zero-today full scan must not be persisted.
+    if (exists) {
+      const saved = JSON.parse(fs.readFileSync(anchorPath, 'utf8'));
+      assert.ok(
+        !(saved.today && Number(saved.today.totalTokens) === 0),
+        'anchor must not persist a zero-totalTokens today from an empty full scan'
+      );
+    }
+  } finally {
+    childProcess.spawn = originalSpawn;
+    if (originalSharedDir === undefined) delete process.env.TOKEN_MONITOR_SHARED_DIR;
+    else process.env.TOKEN_MONITOR_SHARED_DIR = originalSharedDir;
+    if (handle) try { handle.stop(); } catch (_) {}
+    delete require.cache[collectorPath];
+    fs.rmSync(tmpShared, { recursive: true, force: true });
+  }
+});
+
 function waitForCondition(predicate, timeoutMs = 4000) {
   if (predicate()) return Promise.resolve();
   return new Promise((resolve, reject) => {
