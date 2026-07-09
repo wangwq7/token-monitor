@@ -1,0 +1,112 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const test = require('node:test');
+
+const { collectUsageOnce } = require('../../src/shared/collector');
+const { emptyPeriod } = require('../../src/shared/usage');
+
+// Stub tokscale so the full scan returns controlled data per period.
+let calls = 0;
+async function sequentialTokscale() {
+  calls += 1;
+  if (calls === 1) {
+    // --today
+    return { entries: [{ client: 'claude', sessionId: 's1', model: 'claude-opus-4-8', input: 100, output: 5, cost: 1 }] };
+  }
+  if (calls === 2) {
+    // --month
+    return { entries: [
+      { client: 'claude', sessionId: 's1', model: 'claude-opus-4-8', input: 500, output: 20, cost: 5 },
+      { client: 'claude', sessionId: 's2', model: 'claude-sonnet-4-8', input: 200, output: 10, cost: 1 }
+    ] };
+  }
+  // --since allTime
+  return { entries: [
+    { client: 'claude', sessionId: 's1', model: 'claude-opus-4-8', input: 2000, output: 90, cost: 20 },
+    { client: 'claude', sessionId: 's2', model: 'claude-sonnet-4-8', input: 800, output: 40, cost: 4 }
+  ] };
+}
+
+test('progressive loading fires onProgress after each period scan', async () => {
+  calls = 0;
+  const partials = [];
+  const summary = await collectUsageOnce({
+    clients: 'claude',
+    allTimeSince: '2025-01-01',
+    commandTimeoutMs: 1000,
+    deviceId: 'dev1',
+    limitsEnabled: false,
+    historyEnabled: false,
+    runTokscale: sequentialTokscale,
+    collectWslUsage: async () => ({ bundle: emptyWslBundle(), detected: [] }),
+    onProgress: (data) => partials.push({ ...data })
+  });
+  // First partial: today only
+  assert.equal(partials.length, 2, 'should fire onProgress twice (today, month)');
+  assert.equal(partials[0].today.totalTokens, 105, 'first partial should have today tokens');
+  assert.equal(partials[0].month, undefined, 'first partial should not yet have month');
+  assert.equal(partials[0].allTime, undefined, 'first partial should not yet have allTime');
+  // No history or limits in partials — carryDeviceHistory contract
+  assert.equal('history' in partials[0], false, 'partial must not have history key');
+  assert.equal('limits' in partials[0], false, 'partial must not have limits key');
+  // Second partial: today + month
+  assert.equal(partials[1].today.totalTokens, 105, 'second partial should still have today');
+  assert.equal(partials[1].month.totalTokens, 730, 'second partial should have month tokens');
+  assert.equal(partials[1].allTime, undefined, 'second partial should not yet have allTime');
+  assert.equal('history' in partials[1], false, 'second partial must not have history key');
+  assert.equal('limits' in partials[1], false, 'second partial must not have limits key');
+  // Final summary must include all periods
+  assert.equal(summary.today.totalTokens, 105, 'final today');
+  assert.equal(summary.month.totalTokens, 730, 'final month');
+  assert.equal(summary.allTime.totalTokens, 2930, 'final allTime');
+});
+
+test('progressive loading skips onProgress on anchored ticks', async () => {
+  calls = 0;
+  const partials = [];
+  const anchor = { dateKey: require('../../src/shared/collector').localTodayKey(), today: emptyPeriod(), month: emptyPeriod(), allTime: emptyPeriod() };
+  await collectUsageOnce({
+    clients: 'claude',
+    allTimeSince: '2025-01-01',
+    commandTimeoutMs: 1000,
+    deviceId: 'dev1',
+    limitsEnabled: false,
+    historyEnabled: false,
+    todayOnlyAnchor: anchor,
+    wslAnchor: emptyWslBundle(),
+    runTokscale: sequentialTokscale,
+    collectWslUsage: async () => ({ bundle: emptyWslBundle(), detected: [] }),
+    onProgress: () => partials.push('called')
+  });
+  assert.equal(partials.length, 0, 'anchored tick should not fire onProgress');
+});
+
+function emptyWslBundle() {
+  return { today: emptyPeriod(), month: emptyPeriod(), allTime: emptyPeriod() };
+}
+
+test('progressive loading onProgress throw does not abort the full scan', async () => {
+  calls = 0;
+  let onProgressCalled = false;
+  const summary = await collectUsageOnce({
+    clients: 'claude',
+    allTimeSince: '2025-01-01',
+    commandTimeoutMs: 1000,
+    deviceId: 'dev1',
+    limitsEnabled: false,
+    historyEnabled: false,
+    runTokscale: sequentialTokscale,
+    collectWslUsage: async () => ({ bundle: emptyWslBundle(), detected: [] }),
+    onProgress: () => {
+      onProgressCalled = true;
+      throw new Error('simulated progress error');
+    }
+  });
+  // onProgress was called (and threw, but was caught)
+  assert.equal(onProgressCalled, true, 'onProgress should have been called');
+  // The full scan must still complete with all three periods
+  assert.equal(summary.today.totalTokens, 105, 'today must survive an onProgress throw');
+  assert.equal(summary.month.totalTokens, 730, 'month must survive an onProgress throw');
+  assert.equal(summary.allTime.totalTokens, 2930, 'allTime must survive an onProgress throw');
+});

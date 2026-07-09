@@ -1,0 +1,688 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const test = require('node:test');
+
+const { codexCommandCandidates, codexCommandSourceDetail, createLimitsCollector, fetchCodexLimits, mapCodexRateLimitsToProvider } = require('../../src/shared/limitCollector');
+const { hashAccountKey } = require('../../src/shared/codexAuth');
+
+function dirent(name, directory = true) {
+  return {
+    name,
+    isDirectory: () => directory
+  };
+}
+
+test('Codex command candidates include Microsoft Store app installs on Windows', () => {
+  const programFiles = 'C:\\Program Files';
+  const appxDir = path.win32.join(programFiles, 'WindowsApps');
+  const oldAppxPackage = 'OpenAI.Codex_26.601.2237.0_x64__2p2nqsd0c76g0';
+  const appxPackage = 'OpenAI.Codex_26.602.4764.0_x64__2p2nqsd0c76g0';
+  const expectedResourceCli = path.win32.join(appxDir, appxPackage, 'app', 'resources', 'codex.exe');
+  const expectedAppExe = path.win32.join(appxDir, appxPackage, 'app', 'Codex.exe');
+  const oldAppExe = path.win32.join(appxDir, oldAppxPackage, 'app', 'Codex.exe');
+
+  const candidates = codexCommandCandidates({
+    ProgramFiles: programFiles,
+    APPDATA: 'C:\\Users\\Javis\\AppData\\Roaming'
+  }, 'win32', {
+    readdirSync: (dir) => {
+      assert.equal(dir, appxDir);
+      return [dirent(oldAppxPackage), dirent(appxPackage), dirent('Other.App_1.0.0_x64__id')];
+    }
+  });
+
+  assert.equal(candidates.includes(expectedResourceCli), true);
+  assert.equal(candidates.includes(expectedAppExe), true);
+  assert.ok(candidates.indexOf(expectedResourceCli) < candidates.indexOf(expectedAppExe));
+  assert.ok(candidates.indexOf(expectedResourceCli) < candidates.indexOf(oldAppExe));
+});
+
+test('Codex command candidates include app-managed local binaries on Windows', () => {
+  const localAppData = 'C:\\Users\\Javis\\AppData\\Local';
+  const localBin = path.win32.join(localAppData, 'OpenAI', 'Codex', 'bin');
+  const packageBin = path.win32.join(
+    localAppData,
+    'Packages',
+    'OpenAI.Codex_2p2nqsd0c76g0',
+    'LocalCache',
+    'Local',
+    'OpenAI',
+    'Codex',
+    'bin'
+  );
+  const expectedLocal = path.win32.join(localBin, 'codex.exe');
+  const expectedLocalVersioned = path.win32.join(localBin, '716dda49c14d31a0', 'codex.exe');
+  const expectedPackage = path.win32.join(packageBin, 'codex.exe');
+  const expectedAlias = path.win32.join(localAppData, 'Microsoft', 'WindowsApps', 'codex.exe');
+  const impossibleNodeCandidate = path.win32.join(localBin, 'node.exe', 'codex.exe');
+  const impossibleCodexExeCandidate = path.win32.join(localBin, 'codex.exe', 'codex.exe');
+
+  const candidates = codexCommandCandidates({
+    LOCALAPPDATA: localAppData
+  }, 'win32', {
+    readdirSync: (dir) => {
+      if (dir === localBin) {
+        return [
+          dirent('716dda49c14d31a0'),
+          dirent('codex.exe', false),
+          dirent('node.exe', false),
+          dirent('rg.exe', false)
+        ];
+      }
+      if (dir === path.win32.join(localAppData, 'Packages')) {
+        return [dirent('OpenAI.Codex_2p2nqsd0c76g0'), dirent('Other.App')];
+      }
+      if (dir === packageBin) return [];
+      return [];
+    }
+  });
+
+  assert.equal(candidates.includes(expectedLocal), true);
+  assert.equal(candidates.includes(expectedLocalVersioned), true);
+  assert.equal(candidates.includes(expectedPackage), true);
+  assert.equal(candidates.includes(impossibleNodeCandidate), false);
+  assert.equal(candidates.includes(impossibleCodexExeCandidate), false);
+  assert.ok(candidates.indexOf(expectedLocal) < candidates.indexOf(expectedAlias));
+});
+
+test('Codex command source detail separates app-managed binaries from CLI commands', () => {
+  assert.equal(
+    codexCommandSourceDetail('C:\\Users\\Javis\\AppData\\Local\\OpenAI\\Codex\\bin\\codex.exe', 'win32'),
+    'app'
+  );
+  assert.equal(
+    codexCommandSourceDetail('C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.602.4764.0_x64__id\\app\\resources\\codex.exe', 'win32'),
+    'app'
+  );
+  assert.equal(
+    codexCommandSourceDetail('C:\\Users\\Javis\\AppData\\Roaming\\npm\\codex.cmd', 'win32'),
+    'cli'
+  );
+  assert.equal(codexCommandSourceDetail('codex.cmd', 'win32'), 'cli');
+  assert.equal(codexCommandSourceDetail('/Applications/Codex.app/Contents/Resources/codex', 'darwin'), 'app');
+});
+
+test('Codex provider preserves source detail for renderer labels', () => {
+  const provider = mapCodexRateLimitsToProvider({
+    account: { email: 'user@example.com', planType: 'plus' },
+    rateLimits: {
+      primary: {
+        usedPercent: 12,
+        resetsAt: '2026-06-01T00:00:00Z',
+        windowDurationMins: 300
+      }
+    }
+  }, {
+    source: 'rpc',
+    sourceDetail: 'app',
+    updatedAt: '2026-06-01T00:00:00Z'
+  });
+
+  assert.equal(provider.source, 'rpc');
+  assert.equal(provider.sourceDetail, 'app');
+  assert.equal(provider.accountEmail, 'user@example.com');
+});
+
+test('Codex provider reads quota windows from alternate rate limit ids', () => {
+  const provider = mapCodexRateLimitsToProvider({
+    account: { email: 'user@example.com', planType: 'plus' },
+    rateLimits: { planType: 'plus' },
+    rateLimitsByLimitId: {
+      'gpt-5.4': {
+        primary: {
+          usedPercent: 10,
+          resetsAt: '2026-06-01T05:00:00Z',
+          windowDurationMins: 300
+        },
+        secondary: {
+          usedPercent: 25,
+          resetsAt: '2026-06-07T00:00:00Z',
+          windowDurationMins: 10080
+        }
+      }
+    }
+  }, {
+    source: 'rpc',
+    sourceDetail: 'app',
+    updatedAt: '2026-06-01T00:00:00Z'
+  });
+
+  assert.equal(provider.status, 'ok');
+  assert.deepEqual(provider.windows.map((window) => window.kind), ['session', 'weekly']);
+  assert.equal(provider.windows[0].remainingPercent, 90);
+  assert.equal(provider.windows[1].remainingPercent, 75);
+});
+
+test('Codex provider keeps successful empty quota reads as ok', () => {
+  const provider = mapCodexRateLimitsToProvider({
+    account: { email: 'user@example.com', planType: 'plus' },
+    rateLimits: { planType: 'plus' },
+    rateLimitsByLimitId: {}
+  }, {
+    source: 'rpc',
+    sourceDetail: 'app',
+    updatedAt: '2026-06-01T00:00:00Z'
+  });
+
+  assert.equal(provider.status, 'ok');
+  assert.equal(provider.accountLabel, 'Plus');
+  assert.deepEqual(provider.windows, []);
+});
+
+test('Codex provider supports managed-account source detail', () => {
+  const provider = mapCodexRateLimitsToProvider({
+    account: { email: 'managed@example.com', planType: 'plus' },
+    rateLimits: {
+      primary: {
+        usedPercent: 8,
+        resetsAt: '2026-06-01T00:00:00Z',
+        windowDurationMins: 300
+      }
+    }
+  }, {
+    source: 'rpc',
+    sourceDetail: 'managed',
+    accountKey: 'sha256:managed',
+    updatedAt: '2026-06-01T00:00:00Z'
+  });
+
+  assert.equal(provider.sourceDetail, 'managed');
+  assert.equal(provider.accountKey, 'sha256:managed');
+  assert.equal(provider.accountEmail, 'managed@example.com');
+});
+
+function codexPayload(email, sourceDetail) {
+  return {
+    account: { email, planType: 'plus' },
+    rateLimits: { primary: { usedPercent: 12, resetsAt: '2026-06-01T05:00:00Z', windowDurationMins: 300 } },
+    sourceDetail
+  };
+}
+
+function codexProvider(accountKey, accountEmail, remainingPercent, updatedAt) {
+  return {
+    provider: 'codex',
+    accountKey,
+    accountEmail,
+    accountLabel: 'Plus',
+    status: 'ok',
+    source: 'rpc',
+    sourceDetail: 'managed',
+    updatedAt,
+    windows: [
+      {
+        kind: 'session',
+        usedPercent: 100 - remainingPercent,
+        remainingPercent,
+        resetsAt: '2026-06-01T05:00:00Z',
+        windowMinutes: 300
+      }
+    ]
+  };
+}
+
+function makeIdToken(payload) {
+  const seg = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+  return `${seg({ alg: 'none' })}.${seg(payload)}.`;
+}
+
+// The live account's auth.json is never read in tests unless a test opts in.
+const noLiveAuth = { readFileSync: () => { throw new Error('no auth.json'); } };
+
+test('fetchCodexLimits returns one provider per managed Codex account', async () => {
+  const seenHomes = [];
+  const providers = await fetchCodexLimits({
+    codexManagedAccounts: [
+      { id: 'one', email: 'one@example.com', homePath: '/tmp/token-monitor-codex/one' },
+      { id: 'two', email: 'two@example.com', homePath: '/tmp/token-monitor-codex/two' }
+    ]
+  }, {
+    now: () => Date.parse('2026-06-01T00:00:00Z'),
+    env: { PATH: '/usr/bin' },
+    readCodexRpc: async (deps) => {
+      // No live login configured in this scenario; only the managed homes resolve.
+      if (!deps.env.CODEX_HOME) throw Object.assign(new Error('Codex account not configured'), { status: 'notConfigured' });
+      seenHomes.push(deps.env.CODEX_HOME);
+      const email = deps.env.CODEX_HOME.endsWith('/one') ? 'one@example.com' : 'two@example.com';
+      return codexPayload(email);
+    }
+  });
+
+  assert.deepEqual(seenHomes, ['/tmp/token-monitor-codex/one', '/tmp/token-monitor-codex/two']);
+  assert.equal(providers.length, 2);
+  assert.deepEqual(providers.map((provider) => provider.accountEmail), ['one@example.com', 'two@example.com']);
+  assert.deepEqual(providers.map((provider) => provider.sourceDetail), ['managed', 'managed']);
+});
+
+test('createLimitsCollector retains recent Codex quota windows across one empty refresh', async () => {
+  let now = Date.parse('2026-06-01T00:00:00Z');
+  let calls = 0;
+  const collector = createLimitsCollector({
+    limitProviders: 'codex',
+    limitsRefreshMs: 60_000
+  }, {
+    now: () => now,
+    providerFetchers: {
+      codex: async () => {
+        calls += 1;
+        const provider = codexProvider('sha256:codex-a', 'a@example.com', 80, new Date(now).toISOString());
+        return calls === 1 ? provider : { ...provider, windows: [] };
+      }
+    }
+  });
+
+  const first = await collector.snapshot(true);
+  now = Date.parse('2026-06-01T00:05:00Z');
+  const second = await collector.snapshot(true);
+
+  assert.equal(first.providers[0].windows.length, 1);
+  assert.equal(second.providers[0].windows.length, 1);
+  assert.equal(second.providers[0].windows[0].remainingPercent, 80);
+  assert.equal(second.providers[0].updatedAt, '2026-06-01T00:00:00.000Z');
+});
+
+test('fetchCodexLimits skips disabled managed Codex accounts', async () => {
+  const seenHomes = [];
+  const providers = await fetchCodexLimits({
+    codexManagedAccounts: [
+      { id: 'one', email: 'one@example.com', homePath: '/tmp/token-monitor-codex/one', enabled: true },
+      { id: 'two', email: 'two@example.com', homePath: '/tmp/token-monitor-codex/two', enabled: false }
+    ]
+  }, {
+    now: () => Date.parse('2026-06-01T00:00:00Z'),
+    env: { PATH: '/usr/bin' },
+    readCodexRpc: async (deps) => {
+      if (!deps.env.CODEX_HOME) throw Object.assign(new Error('Codex account not configured'), { status: 'notConfigured' });
+      seenHomes.push(deps.env.CODEX_HOME);
+      return codexPayload('one@example.com');
+    }
+  });
+
+  assert.deepEqual(seenHomes, ['/tmp/token-monitor-codex/one']);
+  assert.equal(providers.length, 1);
+  assert.equal(providers[0].accountEmail, 'one@example.com');
+});
+
+test('fetchCodexLimits keeps the live system account visible alongside managed accounts', async () => {
+  const seenHomes = [];
+  const providers = await fetchCodexLimits({
+    codexManagedAccounts: [
+      { id: 'two', email: 'two@example.com', homePath: '/tmp/token-monitor-codex/two' }
+    ]
+  }, {
+    now: () => Date.parse('2026-06-01T00:00:00Z'),
+    env: { PATH: '/usr/bin' },
+    ...noLiveAuth,
+    readCodexRpc: async (deps) => {
+      const home = deps.env.CODEX_HOME || '<live>';
+      seenHomes.push(home);
+      return home === '<live>'
+        ? codexPayload('live@example.com', 'app')
+        : codexPayload('two@example.com');
+    }
+  });
+
+  // The live login (the account the Codex app uses) is probed first and stays visible.
+  assert.deepEqual(seenHomes, ['<live>', '/tmp/token-monitor-codex/two']);
+  assert.deepEqual(providers.map((provider) => provider.accountEmail), ['live@example.com', 'two@example.com']);
+  assert.deepEqual(providers.map((provider) => provider.sourceDetail), ['app', 'managed']);
+});
+
+test('fetchCodexLimits does not show the live account twice when it is also managed', async () => {
+  const providers = await fetchCodexLimits({
+    codexManagedAccounts: [
+      { id: 'a', email: 'a@example.com', homePath: '/tmp/token-monitor-codex/a' }
+    ]
+  }, {
+    now: () => Date.parse('2026-06-01T00:00:00Z'),
+    env: { PATH: '/usr/bin' },
+    ...noLiveAuth,
+    readCodexRpc: async (deps) => codexPayload('a@example.com', deps.env.CODEX_HOME ? undefined : 'app')
+  });
+
+  assert.equal(providers.length, 1);
+  assert.equal(providers[0].accountEmail, 'a@example.com');
+  assert.equal(providers[0].sourceDetail, 'app');
+});
+
+test('fetchCodexLimits dedups the live account against the same managed account by account id (no email needed)', async () => {
+  const sharedKey = hashAccountKey('acct_shared');
+  const idToken = makeIdToken({ chatgpt_account_id: 'acct_shared' }); // no email claim
+  const providers = await fetchCodexLimits({
+    codexManagedAccounts: [
+      { id: 'm', email: '', accountKey: sharedKey, homePath: '/tmp/token-monitor-codex/m' }
+    ]
+  }, {
+    now: () => Date.parse('2026-06-01T00:00:00Z'),
+    env: { PATH: '/usr/bin' },
+    codexAuthPath: '/fake/.codex/auth.json',
+    readFileSync: () => JSON.stringify({ tokens: { id_token: idToken } }),
+    readCodexRpc: async (deps) => ({
+      account: { planType: 'plus' },
+      rateLimits: { primary: { usedPercent: 3, resetsAt: '2026-06-01T05:00:00Z', windowDurationMins: 300 } },
+      sourceDetail: deps.env.CODEX_HOME ? undefined : 'app'
+    })
+  });
+
+  assert.equal(providers.length, 1);
+  assert.equal(providers[0].accountKey, sharedKey);
+  assert.equal(providers[0].sourceDetail, 'app'); // the live representation is kept
+});
+
+test('fetchCodexLimits fills the live account email from auth.json when the RPC omits it', async () => {
+  const idToken = makeIdToken({ email: 'live@example.com', chatgpt_account_id: 'acct_live' });
+  const providers = await fetchCodexLimits({
+    codexManagedAccounts: [
+      { id: 'm', email: 'managed@example.com', accountKey: 'sha256:managed', homePath: '/tmp/token-monitor-codex/m' }
+    ]
+  }, {
+    now: () => Date.parse('2026-06-01T00:00:00Z'),
+    env: { PATH: '/usr/bin' },
+    codexAuthPath: '/fake/.codex/auth.json',
+    readFileSync: (p) => {
+      assert.equal(p, '/fake/.codex/auth.json');
+      return JSON.stringify({ tokens: { id_token: idToken } });
+    },
+    readCodexRpc: async (deps) => {
+      // Live RPC returns no email (the real-world bug); managed home returns its own.
+      if (!deps.env.CODEX_HOME) {
+        return { account: { planType: 'plus' }, rateLimits: { primary: { usedPercent: 2, resetsAt: '2026-06-01T05:00:00Z', windowDurationMins: 300 } }, sourceDetail: 'app' };
+      }
+      return codexPayload('managed@example.com');
+    }
+  });
+
+  const live = providers.find((provider) => provider.sourceDetail === 'app');
+  assert.ok(live, 'live account should be present');
+  assert.equal(live.accountEmail, 'live@example.com');
+  assert.match(live.accountKey, /^sha256:[0-9a-f]{64}$/);
+});
+
+test('fetchCodexLimits retries empty Codex quota reads on the same RPC session', async () => {
+  const { EventEmitter } = require('node:events');
+  let spawns = 0;
+  let rateLimitReads = 0;
+  const providers = await fetchCodexLimits({}, {
+    now: () => Date.parse('2026-06-01T00:00:00Z'),
+    env: { PATH: '/usr/bin' },
+    codexCommand: 'codex',
+    codexEmptyQuotaRetryDelayMs: 0,
+    ...noLiveAuth,
+    spawn: () => {
+      spawns += 1;
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = {
+        write(line) {
+          const message = JSON.parse(String(line));
+          const respond = (result) => {
+            queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify({ id: message.id, result })}\n`));
+          };
+          if (message.method === 'initialize') respond({});
+          if (message.method === 'account/rateLimits/read') {
+            rateLimitReads += 1;
+            respond(rateLimitReads === 1
+              ? {
+                  rateLimits: { planType: 'plus' },
+                  rateLimitsByLimitId: {}
+                }
+              : {
+                  rateLimits: {
+                    primary: {
+                      usedPercent: 4,
+                      resetsAt: '2026-06-01T05:00:00Z',
+                      windowDurationMins: 300
+                    }
+                  }
+                });
+          }
+          if (message.method === 'account/read') respond({ account: { email: 'live@example.com', planType: 'plus' } });
+        }
+      };
+      child.kill = () => {};
+      return child;
+    }
+  });
+
+  assert.equal(spawns, 1);
+  assert.equal(rateLimitReads, 2);
+  assert.equal(providers.status, 'ok');
+  assert.equal(providers.accountLabel, 'Plus');
+  assert.equal(providers.windows[0].remainingPercent, 96);
+});
+
+test('fetchCodexLimits does not retry usage-based Codex plans without quota windows', async () => {
+  const { EventEmitter } = require('node:events');
+  const cases = [
+    { planType: 'enterprise_cbp_usage_based', label: 'Enterprise' },
+    { planType: 'self serve business usage based', label: 'Business' }
+  ];
+
+  for (const { planType, label } of cases) {
+    let spawns = 0;
+    let rateLimitReads = 0;
+    const providers = await fetchCodexLimits({}, {
+      now: () => Date.parse('2026-06-01T00:00:00Z'),
+      env: { PATH: '/usr/bin' },
+      codexCommand: 'codex',
+      codexEmptyQuotaRetryDelayMs: 0,
+      ...noLiveAuth,
+      spawn: () => {
+        spawns += 1;
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.stdin = {
+          write(line) {
+            const message = JSON.parse(String(line));
+            const respond = (result) => {
+              queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify({ id: message.id, result })}\n`));
+            };
+            if (message.method === 'initialize') respond({});
+            if (message.method === 'account/rateLimits/read') {
+              rateLimitReads += 1;
+              respond({
+                rateLimits: { planType },
+                rateLimitsByLimitId: {}
+              });
+            }
+            if (message.method === 'account/read') respond({ account: { email: 'live@example.com', planType } });
+          }
+        };
+        child.kill = () => {};
+        return child;
+      }
+    });
+
+    assert.equal(spawns, 1);
+    assert.equal(rateLimitReads, 1);
+    assert.equal(providers.status, 'ok');
+    assert.equal(providers.accountLabel, label);
+    assert.deepEqual(providers.windows, []);
+  }
+});
+
+test('Codex exhausted quota remains a live provider with zero remaining window', () => {
+  const provider = mapCodexRateLimitsToProvider({
+    account: { planType: 'plus' },
+    rateLimits: {
+      rateLimitReachedType: 'primary',
+      primary: {
+        usedPercent: 100,
+        resetsAt: '2026-06-01T05:00:00Z',
+        windowDurationMins: 300
+      },
+      secondary: {
+        usedPercent: 39,
+        resetsAt: '2026-06-06T00:00:00Z',
+        windowDurationMins: 10080
+      }
+    }
+  }, {
+    source: 'rpc',
+    sourceDetail: 'app',
+    updatedAt: '2026-06-01T00:00:00Z'
+  });
+
+  assert.equal(provider.status, 'ok');
+  assert.equal(provider.accountLabel, 'Plus');
+  assert.equal(provider.windows[0].kind, 'session');
+  assert.equal(provider.windows[0].remainingPercent, 0);
+  assert.equal(provider.windows[1].kind, 'weekly');
+  assert.equal(provider.windows[1].remainingPercent, 61);
+});
+
+test('Codex provider preserves manual reset credits from RPC payload', () => {
+  const provider = mapCodexRateLimitsToProvider({
+    account: { planType: 'plus' },
+    rateLimits: {
+      primary: {
+        usedPercent: 54,
+        resetsAt: 1782801999,
+        windowDurationMins: 300
+      },
+      secondary: {
+        usedPercent: 8,
+        resetsAt: 1783388799,
+        windowDurationMins: 10080
+      }
+    },
+    rateLimitResetCredits: {
+      availableCount: 2,
+      nextExpiresAt: '2026-07-18T23:00:00Z',
+      expirations: [
+        '2026-07-18T23:00:00Z',
+        '2026-07-19T01:00:00Z'
+      ]
+    }
+  }, {
+    source: 'rpc',
+    sourceDetail: 'app',
+    updatedAt: '2026-06-30T00:00:00Z'
+  });
+
+  assert.deepEqual(provider.resetCredits, {
+    availableCount: 2,
+    nextExpiresAt: '2026-07-18T23:00:00.000Z',
+    expirations: [
+      '2026-07-18T23:00:00.000Z',
+      '2026-07-19T01:00:00.000Z'
+    ]
+  });
+});
+
+test('fetchCodexLimits keeps reset credits returned by the Codex RPC reader', async () => {
+  const { EventEmitter } = require('node:events');
+  const providers = await fetchCodexLimits({}, {
+    now: () => Date.parse('2026-06-30T00:00:00Z'),
+    env: { PATH: '/usr/bin' },
+    codexCommand: 'codex',
+    ...noLiveAuth,
+    spawn: () => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = {
+        write(line) {
+          const message = JSON.parse(String(line));
+          const respond = (result) => {
+            queueMicrotask(() => child.stdout.emit('data', `${JSON.stringify({ id: message.id, result })}\n`));
+          };
+          if (message.method === 'initialize') respond({});
+          if (message.method === 'account/rateLimits/read') {
+            respond({
+              rateLimits: {
+                primary: { usedPercent: 54, resetsAt: '2026-06-30T05:00:00Z', windowDurationMins: 300 },
+                secondary: { usedPercent: 8, resetsAt: '2026-07-07T00:00:00Z', windowDurationMins: 10080 }
+              },
+              rateLimitResetCredits: { availableCount: 2 }
+            });
+          }
+          if (message.method === 'account/read') respond({ account: { email: 'live@example.com', planType: 'plus' } });
+        }
+      };
+      child.kill = () => {};
+      return child;
+    }
+  });
+
+  assert.equal(providers.resetCredits.availableCount, 2);
+});
+
+test('fetchCodexLimits augments reset credits expiry from the Codex OAuth endpoint', async () => {
+  const idToken = makeIdToken({ email: 'live@example.com', chatgpt_account_id: 'acct_live' });
+  const fetches = [];
+  const providers = await fetchCodexLimits({}, {
+    now: () => Date.parse('2026-06-30T00:00:00Z'),
+    env: { PATH: '/usr/bin', CODEX_HOME: '/tmp/token-monitor-codex/live' },
+    codexAuthPath: '/tmp/token-monitor-codex/live/auth.json',
+    codexCommand: 'codex',
+    readFileSync: (file) => {
+      if (String(file).endsWith('auth.json')) {
+        return JSON.stringify({ tokens: { access_token: 'access-token', id_token: idToken } });
+      }
+      if (String(file).endsWith('config.toml')) {
+        return 'chatgpt_base_url = "https://chatgpt.com/backend-api/"\n';
+      }
+      throw new Error(`unexpected read ${file}`);
+    },
+    fetch: async (url, options) => {
+      fetches.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          credits: [
+            {
+              id: 'expired',
+              status: 'available',
+              expires_at: '2026-06-17T00:39:53Z'
+            },
+            {
+              id: 'later',
+              status: 'available',
+              expires_at: '2026-07-18T00:39:53.731630Z'
+            },
+            {
+              id: 'earlier',
+              status: 'available',
+              expires_at: '2026-07-12T04:03:43.263391Z'
+            },
+            {
+              id: 'future-status',
+              status: 'future_status',
+              expires_at: '2026-07-10T04:03:43Z'
+            }
+          ],
+          available_count: 2
+        })
+      };
+    },
+    readCodexRpc: async () => ({
+      account: { email: 'live@example.com', planType: 'plus' },
+      rateLimits: {
+        primary: { usedPercent: 54, resetsAt: '2026-06-30T05:00:00Z', windowDurationMins: 300 }
+      },
+      rateLimitResetCredits: { availableCount: 2 },
+      sourceDetail: 'app'
+    })
+  });
+
+  assert.equal(fetches.length, 1);
+  assert.equal(fetches[0].url, 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits');
+  assert.equal(fetches[0].options.headers.authorization, 'Bearer access-token');
+  assert.equal(fetches[0].options.headers['chatgpt-account-id'], 'acct_live');
+  assert.equal(fetches[0].options.headers['openai-beta'], 'codex-1');
+  assert.equal(fetches[0].options.headers.originator, 'Codex Desktop');
+  assert.deepEqual(providers.resetCredits, {
+    availableCount: 2,
+    nextExpiresAt: '2026-07-12T04:03:43.263Z',
+    expirations: [
+      '2026-07-12T04:03:43.263Z',
+      '2026-07-18T00:39:53.731Z'
+    ]
+  });
+});
