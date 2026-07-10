@@ -2041,6 +2041,13 @@ body.floating-bubble-collapsed-right .floating-bubble-tab {
   touch-action: pan-x pan-y;
   user-select: none;
 }
+/* Day/month heatmaps are a short slice (one week / one month); let the row size
+   to its content so the trend plot moves up to fill the gap instead of sitting
+   below a fixed 90px track. allTime keeps the full-height scroll for the year. */
+.home-activity-scroll.home-activity-scroll-period-today,
+.home-activity-scroll.home-activity-scroll-period-month {
+  min-height: auto;
+}
 .home-activity-scroll::-webkit-scrollbar {
   display: none;
 }
