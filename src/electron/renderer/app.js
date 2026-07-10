@@ -3409,32 +3409,21 @@ function renderHomeTrendsModule() {
   const today = new Date().toISOString().slice(0, 10);
   const todayPeriod = state.stats?.periods?.today;
   const points = homeOverviewApi.patchDailyToday(rawDaily, today, Number(todayPeriod?.totalTokens || 0), Number(todayPeriod?.costUsd || 0));
-  // Scope the heatmap to the selected period so the module reacts to day/month/total
-  // (the full rolling-year heatmap is only shown for allTime). A 28-day / one-month
-  // slice is narrow enough to fit the module width without horizontal scroll; the
-  // year heatmap (allTime) keeps its scroll with followEnd pinning the latest.
-  const currentMonth = today.slice(0, 7);
-  const heatPoints = state.period === 'allTime' ? points
-    : state.period === 'month' ? points.filter((d) => String(d?.date || '').slice(0, 7) === currentMonth)
-    : points.slice(-28);
   const activityLayout = homeOverviewApi.homeActivityHeatmapLayout();
-  const activity = charts.rollingYearHeatmap(dailyWithHeatIntensity(heatPoints), {
+  const activity = charts.rollingYearHeatmap(dailyWithHeatIntensity(points), {
     endDate: today,
     cell: activityLayout.cell,
     gap: activityLayout.gap
   });
-  const rangeLabel = state.period === 'allTime' ? t('trends.range.year')
-    : state.period === 'month' ? t('trends.range.month') : t('trends.range.week');
-  const { module, body } = homeModuleShell('trends', t('home.activity'), 'trends', rangeLabel);
+  const activeDays = activity.cells.filter((cell) => cell.intensity > 0).length;
+  const { module, body } = homeModuleShell('trends', t('home.activity'), 'trends', t('home.activeDays', { count: activeDays }));
   const activityScroll = document.createElement('div');
   activityScroll.className = 'home-activity-scroll';
   activityScroll.tabIndex = 0;
   activityScroll.setAttribute('role', 'region');
   activityScroll.setAttribute('aria-label', t('home.activityScroll'));
   const activityCanvas = document.createElement('div');
-  // Mark the canvas with its period so CSS can scale the narrow day/month slices
-  // to fill the module width (the year heatmap keeps its natural width + scroll).
-  activityCanvas.className = `home-activity-canvas home-activity-period-${state.period}`;
+  activityCanvas.className = 'home-activity-canvas';
   activityCanvas.innerHTML = charts.heatmapSvg(activity, {
     monthLabel: (month) => compactMonthLabel(month.label),
     radius: activityLayout.radius,
@@ -3445,18 +3434,7 @@ function renderHomeTrendsModule() {
   activityScroll.append(activityCanvas);
   setupHomeActivityScroller(activityScroll);
   setupHomeActivityHover(activityScroll);
-  // Trend line follows the selected period via the same series selector the full
-  // Trends view uses (today->last 7 days, month->current month daily, allTime->
-  // monthly), so Home and the Trends panel agree. patchTodayBar keeps today's
-  // point live in day view (homeHistory is frozen and lags the headline total).
-  // `preview` (from above) may lack daily when only homeHistory loaded; fall back
-  // to the patched points so the series selector still has data.
-  const previewForSeries = (preview.daily && preview.daily.length) ? preview : { daily: points, monthly: [], summary: {} };
-  const series = charts.selectPreviewSeries(previewForSeries, state.period);
-  const linePoints = state.period === 'today'
-    ? charts.patchTodayBar(series.points, Number(todayPeriod?.totalTokens || 0))
-    : series.points;
-  const trendLabelKey = series.labelKey;
+  const linePoints = charts.clampDaily(points, 45);
   const summary = homeOverviewApi.homeTrendSummary(linePoints);
   const trendHead = document.createElement('div');
   trendHead.className = 'home-trend-head';
@@ -3466,7 +3444,7 @@ function renderHomeTrendsModule() {
   trendMeta.className = 'home-module-meta';
   trendMeta.textContent = t('home.peakTokens', { value: formatCompact(summary.peak) });
   trendHead.append(trendTitle, trendMeta);
-  const model = charts.areaLineChart(linePoints, { width: 300, height: 70, padTop: 4, padRight: 3, padBottom: 4, padLeft: 3, metric: 'tokens', labelKey: trendLabelKey, curve: true });
+  const model = charts.areaLineChart(linePoints, { width: 300, height: 70, padTop: 4, padRight: 3, padBottom: 4, padLeft: 3, metric: 'tokens', curve: true });
   const plot = document.createElement('div');
   plot.className = 'home-trend-plot';
   const chart = document.createElement('div');
@@ -3475,17 +3453,10 @@ function renderHomeTrendsModule() {
   plot.append(chart);
   const dates = document.createElement('div');
   dates.className = 'home-trend-dates';
-  // homeTrendSummary reads .date (daily); for allTime the monthly series carries
-  // .month, so pick the label field by period to keep axis labels correct.
-  const dateFields = linePoints.length === 0 ? [] : [
-    linePoints[0],
-    linePoints[Math.floor((linePoints.length - 1) / 2)],
-    linePoints[linePoints.length - 1]
-  ];
-  for (const point of dateFields) {
+  for (const date of summary.dates) {
     const label = document.createElement('span');
     label.className = 'home-trend-date';
-    label.textContent = trendShortLabel(point?.[trendLabelKey] || point?.date || '', trendLabelKey);
+    label.textContent = trendShortLabel(date, 'date');
     dates.append(label);
   }
   body.append(activityScroll, trendHead, plot, dates);

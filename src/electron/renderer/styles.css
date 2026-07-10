@@ -2055,21 +2055,6 @@ body.floating-bubble-collapsed-right .floating-bubble-tab {
   width: max-content;
   min-width: 100%;
 }
-/* Day/month heatmaps are a narrow slice (weeks, not a full year); scale the SVG
-   to fill the module width so it reads as a real chart instead of a tiny strip
-   parked at the left edge. The year (allTime) heatmap keeps its natural width
-   and scrolls - followEnd pins the latest in view. */
-.home-activity-canvas.home-activity-period-today,
-.home-activity-canvas.home-activity-period-month {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-}
-.home-activity-canvas.home-activity-period-today .dash-heatmap,
-.home-activity-canvas.home-activity-period-month .dash-heatmap {
-  width: 100%;
-  height: auto;
-}
 .home-activity-canvas .dash-heatmap {
   display: block;
   overflow: visible;
