@@ -67,6 +67,16 @@ test('barsChartSvg renders one rect per segment with colorFor fill and a per-bar
   assert.match(svg, /<title>total 15<\/title>/);
 });
 
+test('barsChartSvg can inset stacked segments to create a visible surface gap', () => {
+  const model = dailyBarsChart(
+    [{ date: '2026-06-01', perClient: { claude: { tokens: 50 }, codex: { tokens: 50 } } }],
+    { width: 100, height: 100, padTop: 0, padRight: 0, padBottom: 0, padLeft: 0, gap: 0, stackBy: 'client', metric: 'tokens' }
+  );
+  const svg = barsChartSvg(model, { colorFor: (k) => clientColors[k] || clientColors.default, stackGap: 2, axisLabel: () => '' });
+  assert.match(svg, /<rect x="0" y="52" width="100" height="48" fill="#cc7c5e" class="bar-seg"><\/rect>/);
+  assert.match(svg, /<path d="M0,50 L0,3 Q0,0 3,0/);
+});
+
 test('barsChartSvg always emits a data-indexed hover target and draws y-axis ticks on request', () => {
   const model = dailyBarsChart(
     [{ date: '2026-06-01', perClient: { claude: { tokens: 10 } } }, { date: '2026-06-02', perClient: { claude: { tokens: 4 } } }],

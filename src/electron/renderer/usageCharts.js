@@ -409,18 +409,20 @@
   }
 
   function barsChartSvg(model, options) {
-    const o = Object.assign({ colorFor: () => '#6ab4f0', titleOf: () => '', axisLabel: () => '', yTicks: 0, formatTick: (v) => String(v), radius: 3 }, options || {});
+    const o = Object.assign({ colorFor: () => '#6ab4f0', titleOf: () => '', axisLabel: () => '', yTicks: 0, formatTick: (v) => String(v), radius: 3, stackGap: 0 }, options || {});
     const p = model.plot;
     const grid = yAxisSvg(p, model.maxTotal, o.yTicks, o.formatTick);
     const parts = (model.bars || []).map((bar) => {
       const segs = bar.segments || [];
       const top = segs.length - 1;
       const drawn = segs.map((s, i) => {
-        const h = Math.max(0, s.height);
+        const gap = Math.min(Math.max(0, Number(o.stackGap) || 0), Math.max(0, s.height) / 2);
+        const h = Math.max(0, s.height - (i < top ? gap : 0));
+        const y = i < top ? s.y + gap : s.y;
         if (i === top && h > 0) {
-          return `<path d="${topRoundedPath(s.x, s.y, s.width, h, o.radius)}" fill="${o.colorFor(s.key)}" class="bar-seg"></path>`;
+          return `<path d="${topRoundedPath(s.x, y, s.width, h, o.radius)}" fill="${o.colorFor(s.key)}" class="bar-seg"></path>`;
         }
-        return `<rect x="${svgRound(s.x)}" y="${svgRound(s.y)}" width="${svgRound(s.width)}" height="${svgRound(h)}" fill="${o.colorFor(s.key)}" class="bar-seg"></rect>`;
+        return `<rect x="${svgRound(s.x)}" y="${svgRound(y)}" width="${svgRound(s.width)}" height="${svgRound(h)}" fill="${o.colorFor(s.key)}" class="bar-seg"></rect>`;
       }).join('');
       const tip = o.titleOf(bar);
       const title = tip ? `<title>${escapeXml(tip)}</title>` : '';

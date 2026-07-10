@@ -2041,6 +2041,46 @@ body.floating-bubble-collapsed-right .floating-bubble-tab {
   touch-action: pan-x pan-y;
   user-select: none;
 }
+/* Day (bar chart) and month (small heatmap) size to their content so the trend
+   plot moves up to fill the gap. total keeps min-height: 90px - its year grid
+   scrolls and needs the room. */
+.home-activity-scroll.home-activity-scroll-period-today,
+.home-activity-scroll.home-activity-scroll-period-month {
+  min-height: auto;
+}
+.home-activity-bar {
+  width: 100%;
+  min-height: 84px;
+}
+.home-activity-bar .dash-chart {
+  display: block;
+  width: 100%;
+  height: 84px;
+  overflow: visible;
+}
+.home-activity-bar .bar-seg {
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.05));
+  transition: opacity 120ms ease, filter 120ms ease;
+}
+.home-activity-bar .axis-base {
+  stroke: rgba(var(--line-rgb), 0.2);
+  stroke-width: 1;
+}
+.home-activity-bar .grid-line {
+  stroke: rgba(var(--line-rgb), 0.06);
+  stroke-width: 1;
+}
+.home-activity-bar .axis-label {
+  fill: var(--muted);
+  font-size: 10px;
+  opacity: 0.68;
+}
+.home-activity-bar .bar-hover {
+  fill: transparent;
+}
+.home-activity-bar .bar-hover:hover {
+  fill: rgba(var(--overlay-rgb), 0.06);
+}
 .home-activity-scroll::-webkit-scrollbar {
   display: none;
 }
@@ -2055,8 +2095,18 @@ body.floating-bubble-collapsed-right .floating-bubble-tab {
   width: max-content;
   min-width: 100%;
 }
+/* Month heatmap: center the natural-size grid without stretching cells.
+   total keeps its natural max-content width + horizontal scroll. */
+.home-activity-canvas.home-activity-period-month {
+  display: flex;
+  justify-content: center;
+}
 .home-activity-canvas .dash-heatmap {
   display: block;
+  width: auto !important;
+  height: auto !important;
+  max-width: none;
+  flex: 0 0 auto;
   overflow: visible;
 }
 .home-activity-canvas .heat-base-layer .heat {

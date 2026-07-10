@@ -453,6 +453,11 @@ function compactMonthLabel(label) {
   return new Intl.DateTimeFormat(currentLocale(), { month: 'short', timeZone: 'UTC' })
     .format(new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1)));
 }
+function monthEndKey(monthKey) {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(monthKey || ''));
+  if (!match) return '';
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]), 0)).toISOString().slice(0, 10);
+}
 function currentCurrency() { return currencyApi.normalizeCurrency(state.settings?.currency); }
 function formatCost(value) { return currencyApi.formatCurrencyFromUsd(value, currentCurrency()); }
 function applyEffectiveCurrencyRates() {
@@ -909,6 +914,46 @@ function stableColor(value, colors) {
   let hash = 0;
   for (const char of String(value || '')) hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
   return colors[Math.abs(hash) % colors.length];
+}
+
+function visibleChartColor(hex) {
+  const match = /^#([0-9a-fA-F]{6})$/.exec(String(hex || ''));
+  if (!match) return hex || '#73bdf5';
+  const r = parseInt(match[1].slice(0, 2), 16);
+  const g = parseInt(match[1].slice(2, 4), 16);
+  const b = parseInt(match[1].slice(4, 6), 16);
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  if (lum >= 42) return hex;
+  const lift = (channel) => Math.round(channel + (205 - channel) * 0.62);
+  return `rgb(${lift(r)}, ${lift(g)}, ${lift(b)})`;
+}
+
+function homeActivityBarColor(key) {
+  if (key === 'all') return '#73bdf5';
+  return visibleChartColor(clientColors[key] || clientColors.default || '#73bdf5');
+}
+
+function periodDailyPoint(date, period) {
+  const tokens = Number(period?.totalTokens || 0);
+  if (tokens <= 0) return null;
+  const perClient = {};
+  for (const [client, value] of Object.entries(period?.clients || {})) {
+    const clientTokens = Number(value || 0);
+    if (clientTokens > 0) perClient[client] = { tokens: clientTokens, cost: Number(period?.clientCosts?.[client] || 0) };
+  }
+  const perModel = {};
+  for (const [model, value] of Object.entries(period?.models || {})) {
+    const modelTokens = Number(value || 0);
+    if (modelTokens > 0) perModel[model] = { tokens: modelTokens, cost: Number(period?.modelCosts?.[model] || 0) };
+  }
+  return {
+    date,
+    tokens,
+    cost: Number(period?.costUsd || 0),
+    activeTimeMs: Number(period?.totalActiveTimeMs || 0),
+    perClient,
+    perModel
+  };
 }
 
 function deviceRowsForPeriod() {
@@ -3380,8 +3425,12 @@ function renderHomeTrendsModule() {
   const historyEnabled = state.settings?.historyEnabled !== false;
   const preview = state.stats?.historyPreview || { daily: [] };
   const history = homeOverviewApi.pickHomeHistory(state.homeHistory, preview);
+  const today = new Date().toISOString().slice(0, 10);
+  const todayPeriod = state.stats?.periods?.today;
+  const fallbackToday = periodDailyPoint(today, todayPeriod);
   const rawDaily = history.daily || [];
-  if (!historyEnabled || rawDaily.length === 0) {
+  const displayDaily = rawDaily.length > 0 ? rawDaily : (fallbackToday ? [fallbackToday] : []);
+  if (!historyEnabled || displayDaily.length === 0) {
     const { module, body } = homeModuleShell('trends', t('home.activity'), 'trends');
     const empty = document.createElement('div');
     empty.className = 'home-module-empty';
@@ -3406,35 +3455,84 @@ function renderHomeTrendsModule() {
   // homeHistory is fetched once and frozen, so its today bucket lags the live headline
   // total; patch today's tokens with the live period total (like the trends sparkline's
   // patchTodayBar) so the heatmap and trend line match the number shown above them.
-  const today = new Date().toISOString().slice(0, 10);
-  const todayPeriod = state.stats?.periods?.today;
-  const points = homeOverviewApi.patchDailyToday(rawDaily, today, Number(todayPeriod?.totalTokens || 0), Number(todayPeriod?.costUsd || 0));
+  const points = homeOverviewApi.patchDailyToday(displayDaily, today, Number(todayPeriod?.totalTokens || 0), Number(todayPeriod?.costUsd || 0));
   const activityLayout = homeOverviewApi.homeActivityHeatmapLayout();
-  const activity = charts.rollingYearHeatmap(dailyWithHeatIntensity(points), {
-    endDate: today,
-    cell: activityLayout.cell,
-    gap: activityLayout.gap
-  });
-  const activeDays = activity.cells.filter((cell) => cell.intensity > 0).length;
-  const { module, body } = homeModuleShell('trends', t('home.activity'), 'trends', t('home.activeDays', { count: activeDays }));
-  const activityScroll = document.createElement('div');
-  activityScroll.className = 'home-activity-scroll';
-  activityScroll.tabIndex = 0;
-  activityScroll.setAttribute('role', 'region');
-  activityScroll.setAttribute('aria-label', t('home.activityScroll'));
-  const activityCanvas = document.createElement('div');
-  activityCanvas.className = 'home-activity-canvas';
-  activityCanvas.innerHTML = charts.heatmapSvg(activity, {
-    monthLabel: (month) => compactMonthLabel(month.label),
-    radius: activityLayout.radius,
-    glowFilterId: 'homeActivityHeatGlow',
-    spotlightId: 'homeActivitySpotlight',
-    spotlightRadius: 82
-  });
-  activityScroll.append(activityCanvas);
-  setupHomeActivityScroller(activityScroll);
-  setupHomeActivityHover(activityScroll);
-  const linePoints = charts.clampDaily(points, 45);
+  const currentMonth = today.slice(0, 7);
+  const currentMonthEnd = monthEndKey(currentMonth) || today;
+  const rangeLabel = state.period === 'allTime' ? t('trends.range.year')
+    : state.period === 'month' ? t('trends.range.month') : t('trends.range.week');
+  const { module, body } = homeModuleShell('trends', t('home.activity'), 'trends', rangeLabel);
+
+  // Activity widget: day = bar chart (7 bars), month = current-month heatmap,
+  // total = rolling-year heatmap (scrollable, latest pinned right). day/month
+  // scale to fit so narrow windows don't occlude; total keeps square cells via
+  // horizontal scroll + followEnd.
+  if (state.period === 'today') {
+    const barPoints = points.slice(-7).map((d) => {
+      const perClient = d && typeof d.perClient === 'object' && d.perClient
+        ? d.perClient
+        : { all: { tokens: Number(d?.tokens || 0) } };
+      return { date: d.date, perClient };
+    });
+    const barModel = charts.dailyBarsChart(barPoints, {
+      width: 300, height: 140, padTop: 14, padRight: 6, padBottom: 20, padLeft: 4,
+      gap: 0.42, metric: 'tokens', labelKey: 'date'
+    });
+    const barWrap = document.createElement('div');
+    barWrap.className = 'home-activity-bar';
+    barWrap.innerHTML = charts.barsChartSvg(barModel, {
+      colorFor: homeActivityBarColor,
+      axisLabel: (bar) => trendShortLabel(bar.label, 'date'),
+      radius: 4,
+      stackGap: 2
+    });
+    body.append(barWrap);
+  } else {
+    // month or total: heatmap inside the scroll container.
+    const heatPoints = state.period === 'allTime' ? points
+      : points.filter((d) => String(d?.date || '').slice(0, 7) === currentMonth);
+    // total re-pins the newest column on every render/resize; day/month don't scroll.
+    if (state.period === 'allTime') {
+      state.homeActivityFollowEnd = true;
+      state.homeActivityScrollLeft = null;
+    }
+    const activityScroll = document.createElement('div');
+    activityScroll.className = `home-activity-scroll home-activity-scroll-period-${state.period}`;
+    activityScroll.tabIndex = 0;
+    activityScroll.setAttribute('role', 'region');
+    activityScroll.setAttribute('aria-label', t('home.activityScroll'));
+    const activityCanvas = document.createElement('div');
+    activityCanvas.className = `home-activity-canvas home-activity-period-${state.period}`;
+    if (heatPoints.length > 0) {
+      const heatmapModel = state.period === 'allTime'
+        ? charts.rollingYearHeatmap(dailyWithHeatIntensity(heatPoints), { endDate: today, cell: activityLayout.cell, gap: activityLayout.gap })
+        : charts.contribHeatmap(dailyWithHeatIntensity(heatPoints), { cell: activityLayout.cell, gap: activityLayout.gap, startDate: currentMonth + '-01', endDate: currentMonthEnd });
+      activityCanvas.innerHTML = charts.heatmapSvg(heatmapModel, {
+        monthLabel: (month) => compactMonthLabel(month.label),
+        radius: activityLayout.radius,
+        glowFilterId: 'homeActivityHeatGlow',
+        spotlightId: 'homeActivitySpotlight',
+        spotlightRadius: 82
+      });
+    } else {
+      const none = document.createElement('div');
+      none.className = 'home-module-empty';
+      none.textContent = t('home.noHistory');
+      activityCanvas.append(none);
+    }
+    activityScroll.append(activityCanvas);
+    setupHomeActivityScroller(activityScroll);
+    setupHomeActivityHover(activityScroll);
+    body.append(activityScroll);
+  }
+
+  // Trend: day = last 30 days (patched live), month = current month daily,
+  // total = ALL daily points (a real multi-point curve, not the 2-point monthly
+  // series). labelKey is 'date' for all three.
+  const linePoints = state.period === 'allTime' ? points
+    : state.period === 'month' ? points.filter((d) => String(d?.date || '').slice(0, 7) === currentMonth)
+    : charts.patchTodayBar(points.slice(-30), Number(todayPeriod?.totalTokens || 0));
+  const trendLabelKey = 'date';
   const summary = homeOverviewApi.homeTrendSummary(linePoints);
   const trendHead = document.createElement('div');
   trendHead.className = 'home-trend-head';
@@ -3444,7 +3542,7 @@ function renderHomeTrendsModule() {
   trendMeta.className = 'home-module-meta';
   trendMeta.textContent = t('home.peakTokens', { value: formatCompact(summary.peak) });
   trendHead.append(trendTitle, trendMeta);
-  const model = charts.areaLineChart(linePoints, { width: 300, height: 70, padTop: 4, padRight: 3, padBottom: 4, padLeft: 3, metric: 'tokens', curve: true });
+  const model = charts.areaLineChart(linePoints, { width: 300, height: 70, padTop: 4, padRight: 3, padBottom: 4, padLeft: 3, metric: 'tokens', labelKey: trendLabelKey, curve: true });
   const plot = document.createElement('div');
   plot.className = 'home-trend-plot';
   const chart = document.createElement('div');
@@ -3453,13 +3551,18 @@ function renderHomeTrendsModule() {
   plot.append(chart);
   const dates = document.createElement('div');
   dates.className = 'home-trend-dates';
-  for (const date of summary.dates) {
+  const dateFields = linePoints.length === 0 ? [] : [
+    linePoints[0],
+    linePoints[Math.floor((linePoints.length - 1) / 2)],
+    linePoints[linePoints.length - 1]
+  ];
+  for (const point of dateFields) {
     const label = document.createElement('span');
     label.className = 'home-trend-date';
-    label.textContent = trendShortLabel(date, 'date');
+    label.textContent = trendShortLabel(point?.[trendLabelKey] || point?.date || '', trendLabelKey);
     dates.append(label);
   }
-  body.append(activityScroll, trendHead, plot, dates);
+  body.append(trendHead, plot, dates);
   return module;
 }
 

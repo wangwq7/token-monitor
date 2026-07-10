@@ -49,6 +49,8 @@ test('Home activity heatmap is a scaled copy of the dashboard heatmap', () => {
     assert.equal(fill(css, homeSelector), fill(dashboardCss, dashboardSelector));
   }
   assert.doesNotMatch(rule(css, '.home-activity-scroll'), /padding-block/);
+  assert.match(rule(css, '.home-activity-canvas .dash-heatmap'), /width:\s*auto\s*!important/);
+  assert.match(rule(css, '.home-activity-canvas .dash-heatmap'), /height:\s*auto\s*!important/);
   assert.match(rule(css, '.home-activity-canvas .heat-bright-layer'), /pointer-events:\s*none/);
   assert.match(rule(css, '.home-activity-tooltip'), /position:\s*fixed/);
   assert.match(rule(css, '.home-activity-canvas .heat-month'), /fill:\s*rgba\(var\(--line-rgb\), 0\.5\)/);
@@ -375,6 +377,26 @@ test('renderHomeTrendsModule patches the activity today cell with the live perio
   const match = rendererSource.match(/function renderHomeTrendsModule\(\) \{([\s\S]*?)\n\}\n\nfunction renderHome/);
   assert.ok(match, 'renderHomeTrendsModule exists');
   assert.match(match[1], /patchDailyToday\([\s\S]*?totalTokens/);
+});
+
+test('renderHomeTrendsModule keeps day bars stacked by tool and month heatmap at full-month small-cell scale', () => {
+  const rendererSource = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/app.js'), 'utf8');
+  const match = rendererSource.match(/function renderHomeTrendsModule\(\) \{([\s\S]*?)\n\}\n\nfunction renderHome/);
+  assert.ok(match, 'renderHomeTrendsModule exists');
+  assert.match(match[1], /const perClient = d && typeof d\.perClient === 'object'/);
+  assert.match(match[1], /colorFor:\s*homeActivityBarColor/);
+  assert.match(match[1], /stackGap:\s*2/);
+  assert.match(match[1], /const currentMonthEnd = monthEndKey\(currentMonth\) \|\| today/);
+  assert.match(match[1], /endDate:\s*currentMonthEnd/);
+});
+
+test('renderHomeTrendsModule falls back to the live today period while history is still empty', () => {
+  const rendererSource = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/app.js'), 'utf8');
+  const match = rendererSource.match(/function renderHomeTrendsModule\(\) \{([\s\S]*?)\n\}\n\nfunction renderHome/);
+  assert.ok(match, 'renderHomeTrendsModule exists');
+  assert.match(match[1], /const fallbackToday = periodDailyPoint\(today, todayPeriod\)/);
+  assert.match(match[1], /const displayDaily = rawDaily\.length > 0 \? rawDaily : \(fallbackToday \? \[fallbackToday\] : \[\]\)/);
+  assert.match(match[1], /patchDailyToday\(displayDaily,/);
 });
 
 test('historyPreviewKey is empty for no days and changes as the daily tail moves', () => {

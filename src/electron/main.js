@@ -147,6 +147,20 @@ const STATUS_PAGE_HOSTS = new Set(SERVICE_STATUS_PROVIDERS.map((provider) => new
 app.setName(APP_NAME);
 if (process.platform === 'win32') app.setAppUserModelId('com.javis.tokenmonitor');
 
+// Portable builds (electron-builder "portable" target) extract to a fresh %TEMP%
+// directory on every launch and delete it on exit. The default userData path lands
+// inside that temp dir, so settings.json, history cache and exchange rates would
+// vanish on every restart. When the portable runtime exposes PORTABLE_EXECUTABLE_DIR
+// (the folder the .exe lives in), pin userData to a stable "data" subfolder next to
+// the executable so user data survives across launches and reboots.
+if (process.env.PORTABLE_EXECUTABLE_DIR) {
+  try {
+    const portableDataDir = path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'data');
+    fs.mkdirSync(portableDataDir, { recursive: true });
+    app.setPath('userData', portableDataDir);
+  } catch (_) { /* fall back to the default temp userData if we can't relocate */ }
+}
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.exit(0);
 
