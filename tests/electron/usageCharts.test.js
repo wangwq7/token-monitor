@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
-  weekStartKey, dailyBarsChart, candleChart, contribHeatmap, statsCards, sparklinePreview,
+  weekStartKey, dailyBarsChart, horizontalBarsChart, monthActivityGrid, candleChart, contribHeatmap, statsCards, sparklinePreview,
   areaLineChart, areaLineSvg, heatmapSvg, rollingYearHeatmap
 } = require('../../src/electron/renderer/usageCharts');
 
@@ -45,6 +45,55 @@ test('dailyBarsChart tolerates empty series', () => {
   assert.deepEqual(c.bars, []);
   assert.deepEqual(c.keys, []);
   assert.equal(c.maxTotal, 1); // never divides by zero
+});
+
+test('horizontalBarsChart stacks tools left-to-right with one row per date', () => {
+  const series = [
+    { date: '2026-07-09', perClient: { claude: { tokens: 80 }, codex: { tokens: 20 } } },
+    { date: '2026-07-10', perClient: { claude: { tokens: 25 } } }
+  ];
+  const chart = horizontalBarsChart(series, {
+    width: 200, height: 100, padTop: 0, padRight: 0, padBottom: 0, padLeft: 40, gap: 0,
+    stackBy: 'client', metric: 'tokens'
+  });
+
+  assert.equal(chart.maxTotal, 100);
+  assert.equal(chart.bars.length, 2);
+  assert.deepEqual(chart.bars[0].segments.map((segment) => [segment.key, segment.x, segment.width]), [
+    ['claude', 40, 128],
+    ['codex', 168, 32]
+  ]);
+  assert.equal(chart.bars[0].y, 0);
+  assert.equal(chart.bars[1].y, 50);
+  assert.equal(chart.bars[1].segments[0].width, 40);
+});
+
+test('monthActivityGrid lays a 30-day month out as three rows by ten columns', () => {
+  const grid = monthActivityGrid([
+    { date: '2026-04-01', intensity: 1, tokens: 10 },
+    { date: '2026-04-30', intensity: 4, tokens: 40 }
+  ], { month: '2026-04', rows: 3, cell: 9, gap: 3 });
+
+  assert.equal(grid.cells.length, 30);
+  assert.equal(grid.rows, 3);
+  assert.equal(grid.columns, 10);
+  assert.equal(grid.width, 117);
+  assert.equal(grid.height, 33);
+  assert.deepEqual([grid.cells[0].date, grid.cells[0].row, grid.cells[0].col], ['2026-04-01', 0, 0]);
+  assert.deepEqual([grid.cells[9].date, grid.cells[9].row, grid.cells[9].col], ['2026-04-10', 0, 9]);
+  assert.deepEqual([grid.cells[10].date, grid.cells[10].row, grid.cells[10].col], ['2026-04-11', 1, 0]);
+  assert.deepEqual([grid.cells[29].date, grid.cells[29].row, grid.cells[29].col], ['2026-04-30', 2, 9]);
+  assert.equal(grid.cells[29].tokens, 40);
+});
+
+test('monthActivityGrid keeps day 31 in an eleventh column', () => {
+  const grid = monthActivityGrid([{ date: '2026-07-31', intensity: 4, tokens: 31 }], {
+    month: '2026-07', rows: 3, cell: 9, gap: 3
+  });
+  assert.equal(grid.cells.length, 31);
+  assert.equal(grid.columns, 11);
+  assert.deepEqual([grid.cells[30].date, grid.cells[30].row, grid.cells[30].col], ['2026-07-31', 2, 8]);
+  assert.equal(grid.cells[30].tokens, 31);
 });
 
 test('candleChart groups days into bucketDays-wide OHLC candles anchored to the latest day', () => {

@@ -1,7 +1,7 @@
 'use strict';
 
 const clientLabels = { claude: 'Claude Code', codex: 'Codex', hermes: 'Hermes', gemini: 'Gemini', cursor: 'Cursor', opencode: 'OpenCode', openclaw: 'OpenClaw', antigravity: 'Antigravity', cline: 'Cline', kimi: 'Kimi', qwen: 'Qwen', grok: 'Grok Build', copilot: 'GitHub Copilot', pi: 'Pi', zed: 'Zed', kilocode: 'Kilo Code', micode: 'MiMo Code', zcode: 'ZCode', kiro: 'Kiro', codebuddy: 'CodeBuddy', workbuddy: 'WorkBuddy' };
-const { clientColors, fallbackModelColors, modelVendorFor, modelColor } = window.TokenMonitorUsageCharts;
+const { clientColors, fallbackModelColors, modelVendorFor, modelDisplayColor } = window.TokenMonitorUsageCharts;
 const clientsWithIcon = new Set([
   'claude', 'codex', 'gemini', 'cursor', 'opencode', 'openclaw', 'hermes', 'antigravity', 'cline', 'kimi', 'qwen', 'grok', 'copilot', 'pi', 'zed', 'kilocode', 'micode', 'zcode', 'kiro', 'codebuddy', 'workbuddy',
   'xai', 'deepseek', 'meta', 'mistral', 'qwen', 'moonshot', 'zai', 'zaiteam', 'cohere', 'xiaomi', 'minimax', 'doubao', 'volcengine', 'qoder'
@@ -452,11 +452,6 @@ function compactMonthLabel(label) {
   if (!match) return String(label || '');
   return new Intl.DateTimeFormat(currentLocale(), { month: 'short', timeZone: 'UTC' })
     .format(new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1)));
-}
-function monthEndKey(monthKey) {
-  const match = /^(\d{4})-(\d{2})$/.exec(String(monthKey || ''));
-  if (!match) return '';
-  return new Date(Date.UTC(Number(match[1]), Number(match[2]), 0)).toISOString().slice(0, 10);
 }
 function currentCurrency() { return currencyApi.normalizeCurrency(state.settings?.currency); }
 function formatCost(value) { return currencyApi.formatCurrencyFromUsd(value, currentCurrency()); }
@@ -916,23 +911,6 @@ function stableColor(value, colors) {
   return colors[Math.abs(hash) % colors.length];
 }
 
-function visibleChartColor(hex) {
-  const match = /^#([0-9a-fA-F]{6})$/.exec(String(hex || ''));
-  if (!match) return hex || '#73bdf5';
-  const r = parseInt(match[1].slice(0, 2), 16);
-  const g = parseInt(match[1].slice(2, 4), 16);
-  const b = parseInt(match[1].slice(4, 6), 16);
-  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  if (lum >= 42) return hex;
-  const lift = (channel) => Math.round(channel + (205 - channel) * 0.62);
-  return `rgb(${lift(r)}, ${lift(g)}, ${lift(b)})`;
-}
-
-function homeActivityBarColor(key) {
-  if (key === 'all') return '#73bdf5';
-  return visibleChartColor(clientColors[key] || clientColors.default || '#73bdf5');
-}
-
 function periodDailyPoint(date, period) {
   const tokens = Number(period?.totalTokens || 0);
   if (tokens <= 0) return null;
@@ -986,7 +964,7 @@ function modelRowsForPeriod(period) {
     name: model,
     value: Number(value),
     cost: Number(period?.modelCosts?.[model] || 0),
-    color: modelColor(model),
+    color: modelDisplayColor(model),
     stale: false,
     cacheReadTokens: Number(period?.modelCacheReads?.[model] || 0),
     cacheWriteTokens: Number(period?.modelCacheWrites?.[model] || 0),
@@ -1001,7 +979,7 @@ function sessionRowsForPeriod(period) {
   const rows = sessionRowsApi.sessionRowsForPeriod(period, {
     clientLabels,
     clientColors,
-    modelColor,
+    modelColor: modelDisplayColor,
     stableColor,
     fallbackColors: fallbackModelColors
   });
@@ -2011,7 +1989,7 @@ function liveModelBreakdownNode(session, { total }) {
     const fill = document.createElement('div');
     fill.className = 'live-model-bar-fill';
     fill.style.width = `${Math.max(2, Math.min(100, (tokens / ref) * 100))}%`;
-    fill.style.background = modelColor(model) || 'var(--accent)';
+    fill.style.background = modelDisplayColor(model) || 'var(--accent)';
     bar.append(fill);
     row.append(label, bar, value);
     wrap.append(row);
@@ -3286,6 +3264,10 @@ function homeActivityTooltipEl() {
   label.className = 'home-activity-tooltip-label';
   label.textContent = 'tokens';
 
+  const name = document.createElement('span');
+  name.className = 'home-activity-tooltip-name';
+  name.dataset.homeActivityTooltipName = 'true';
+
   const date = document.createElement('span');
   date.className = 'home-activity-tooltip-date';
   date.dataset.homeActivityTooltipDate = 'true';
@@ -3293,7 +3275,7 @@ function homeActivityTooltipEl() {
   const row = document.createElement('span');
   row.className = 'home-activity-tooltip-row';
   row.append(count, label);
-  tooltip.append(row, date);
+  tooltip.append(name, row, date);
   document.body.append(tooltip);
   return tooltip;
 }
@@ -3309,6 +3291,37 @@ function moveHomeActivityTooltip(tooltip, cell) {
   const belowY = cellRect.bottom + gap;
   const y = aboveY >= pad ? aboveY : Math.min(window.innerHeight - pad - tooltipRect.height, belowY);
   tooltip.style.transform = `translate(${x}px, ${y}px) translate(-50%, 0)`;
+}
+
+function setupHomeActivityBarHover(root) {
+  const tooltip = homeActivityTooltipEl();
+  let activeTarget = null;
+  const hide = () => {
+    tooltip.dataset.visible = 'false';
+    tooltip.setAttribute('aria-hidden', 'true');
+    tooltip.style.transform = 'translate(-9999px, -9999px)';
+    activeTarget = null;
+  };
+  root.addEventListener('pointermove', (event) => {
+    const hovered = event.target instanceof Element ? event.target : null;
+    // Prefer the colored run under the pointer — it names the model; the
+    // row-wide rect behind it still answers for the empty track (day total).
+    const segment = hovered?.closest('.bar-seg[data-model]');
+    const row = segment ? null : hovered?.closest('.bar-hover[data-d]');
+    const target = segment || row;
+    if (!target || !root.contains(target)) { hide(); return; }
+    if (activeTarget !== target) {
+      activeTarget = target;
+      tooltip.querySelector('[data-home-activity-tooltip-count]').textContent = formatCompact(Number(target.dataset.t || 0));
+      tooltip.querySelector('[data-home-activity-tooltip-name]').textContent = segment ? (segment.dataset.model || '') : '';
+      tooltip.querySelector('[data-home-activity-tooltip-date]').textContent = target.dataset.d || '';
+    }
+    tooltip.dataset.visible = 'true';
+    tooltip.setAttribute('aria-hidden', 'false');
+    moveHomeActivityTooltip(tooltip, target);
+  });
+  root.addEventListener('pointerleave', hide);
+  state.homeActivityHoverTeardown = hide;
 }
 
 function setupHomeActivityHover(scroller) {
@@ -3396,6 +3409,7 @@ function setupHomeActivityHover(scroller) {
       activeCell = cell;
       activeCell.setAttribute('data-active', 'true');
       tooltip.querySelector('[data-home-activity-tooltip-count]').textContent = formatCompact(Number(cell.dataset.t || 0));
+      tooltip.querySelector('[data-home-activity-tooltip-name]').textContent = '';
       tooltip.querySelector('[data-home-activity-tooltip-date]').textContent = cell.dataset.d || '';
     }
     tooltip.dataset.visible = 'true';
@@ -3455,37 +3469,42 @@ function renderHomeTrendsModule() {
   // homeHistory is fetched once and frozen, so its today bucket lags the live headline
   // total; patch today's tokens with the live period total (like the trends sparkline's
   // patchTodayBar) so the heatmap and trend line match the number shown above them.
-  const points = homeOverviewApi.patchDailyToday(displayDaily, today, Number(todayPeriod?.totalTokens || 0), Number(todayPeriod?.costUsd || 0));
+  // fallbackToday already carries the hub-aggregated per-model/per-client maps for
+  // today, so the model-stacked day bar tracks the live total across every device.
+  const points = homeOverviewApi.patchDailyToday(
+    displayDaily, today,
+    Number(todayPeriod?.totalTokens || 0), Number(todayPeriod?.costUsd || 0),
+    fallbackToday ? { perModel: fallbackToday.perModel, perClient: fallbackToday.perClient } : null
+  );
   const activityLayout = homeOverviewApi.homeActivityHeatmapLayout();
   const currentMonth = today.slice(0, 7);
-  const currentMonthEnd = monthEndKey(currentMonth) || today;
   const rangeLabel = state.period === 'allTime' ? t('trends.range.year')
     : state.period === 'month' ? t('trends.range.month') : t('trends.range.week');
   const { module, body } = homeModuleShell('trends', t('home.activity'), 'trends', rangeLabel);
 
-  // Activity widget: day = bar chart (7 bars), month = current-month heatmap,
-  // total = rolling-year heatmap (scrollable, latest pinned right). day/month
-  // scale to fit so narrow windows don't occlude; total keeps square cells via
-  // horizontal scroll + followEnd.
+  // Activity widget: day = horizontal bars stacked by model (dates on the
+  // left), month = a compact three-row daily grid, total = a scrollable
+  // rolling-year heatmap.
   if (state.period === 'today') {
     const barPoints = points.slice(-7).map((d) => {
-      const perClient = d && typeof d.perClient === 'object' && d.perClient
-        ? d.perClient
-        : { all: { tokens: Number(d?.tokens || 0) } };
-      return { date: d.date, perClient };
+      const perModel = d && typeof d.perModel === 'object' && d.perModel
+        ? d.perModel
+        : { unknown: { tokens: Number(d?.tokens || 0) } };
+      return { date: d.date, perModel };
     });
-    const barModel = charts.dailyBarsChart(barPoints, {
-      width: 300, height: 140, padTop: 14, padRight: 6, padBottom: 20, padLeft: 4,
-      gap: 0.42, metric: 'tokens', labelKey: 'date'
+    const barModel = charts.horizontalBarsChart(barPoints, {
+      width: 300, height: 108, padTop: 3, padRight: 4, padBottom: 3, padLeft: 31,
+      gap: 0.34, maxBarHeight: 10, stackBy: 'model', metric: 'tokens', labelKey: 'date'
     });
     const barWrap = document.createElement('div');
-    barWrap.className = 'home-activity-bar';
-    barWrap.innerHTML = charts.barsChartSvg(barModel, {
-      colorFor: homeActivityBarColor,
-      axisLabel: (bar) => trendShortLabel(bar.label, 'date'),
+    barWrap.className = 'home-activity-bar home-activity-bar-horizontal';
+    barWrap.innerHTML = charts.horizontalBarsChartSvg(barModel, {
+      colorFor: modelDisplayColor,
+      rowLabel: (bar) => trendShortLabel(bar.label, 'date'),
       radius: 4,
       stackGap: 2
     });
+    setupHomeActivityBarHover(barWrap);
     body.append(barWrap);
   } else {
     // month or total: heatmap inside the scroll container.
@@ -3506,7 +3525,7 @@ function renderHomeTrendsModule() {
     if (heatPoints.length > 0) {
       const heatmapModel = state.period === 'allTime'
         ? charts.rollingYearHeatmap(dailyWithHeatIntensity(heatPoints), { endDate: today, cell: activityLayout.cell, gap: activityLayout.gap })
-        : charts.contribHeatmap(dailyWithHeatIntensity(heatPoints), { cell: activityLayout.cell, gap: activityLayout.gap, startDate: currentMonth + '-01', endDate: currentMonthEnd });
+        : charts.monthActivityGrid(dailyWithHeatIntensity(heatPoints), { month: currentMonth, rows: 3, cell: activityLayout.cell, gap: activityLayout.gap });
       activityCanvas.innerHTML = charts.heatmapSvg(heatmapModel, {
         monthLabel: (month) => compactMonthLabel(month.label),
         radius: activityLayout.radius,
@@ -5906,7 +5925,6 @@ for (const tab of document.querySelectorAll('.tab')) {
     setPeriod(tab.dataset.period);
     syncPeriodTabs();
     if (state.openSession) openSessionDetail(state.openSession);
-    state.currentTotal = 0;
     state.rowSignature = '';
     render();
   });

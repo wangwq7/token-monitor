@@ -130,8 +130,11 @@ function displayColor(hex) {
   return `rgb(${lift(r)}, ${lift(g)}, ${lift(b)})`;
 }
 function colorFor(key) {
-  const base = state.stackBy === 'model' ? charts.modelColor(key) : (charts.clientColors[key] || charts.clientColors.default);
-  return displayColor(base);
+  // modelDisplayColor already guarantees dark-surface contrast; only the raw
+  // client brand colors (some near-black) need the visibility lift.
+  return state.stackBy === 'model'
+    ? charts.modelDisplayColor(key)
+    : displayColor(charts.clientColors[key] || charts.clientColors.default);
 }
 
 // The app's CSP (style-src 'self') blocks inline style="" attributes, so swatch/dot
@@ -224,7 +227,7 @@ function renderBreakdown() {
     return `<div class="dash-breakdown-col"><div class="dash-breakdown-title" data-i18n="${titleKey}">${t(titleKey)}</div>${html}</div>`;
   };
   
-  const colModel = buildCol('dashboard.stack.model', modelTotals, charts.modelColor);
+  const colModel = buildCol('dashboard.stack.model', modelTotals, charts.modelDisplayColor);
   const colClient = buildCol('dashboard.stack.client', clientTotals, (k) => charts.clientColors[k] || charts.clientColors.default);
   
   elsBreakdown.innerHTML = colModel + colClient;

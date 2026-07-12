@@ -671,15 +671,15 @@ function carryDeviceHistory(previous, incoming) {
   return incoming;
 }
 
-function aggregateHistory(devices, staleAfterMs, nowMs = Date.now()) {
+// History is durable usage data, not presence state: a device that has been
+// offline past the presence threshold must still contribute its persisted
+// daily/monthly series (otherwise every restart starts with a blank history
+// until the first fresh scan lands). Staleness only applies to live periods.
+function aggregateHistory(devices) {
   const histories = [];
   for (const record of devices) {
     const normalized = normalizeDeviceRecord(record);
-    if (!hasOwn(normalized, 'history')) continue;
-    const ageMs = nowMs - Date.parse(normalized.receivedAt || normalized.updatedAt || 0);
-    const stale = Number.isFinite(ageMs) && staleAfterMs > 0 ? ageMs > staleAfterMs : false;
-    if (stale) continue;
-    histories.push(normalized.history);
+    if (hasOwn(normalized, 'history')) histories.push(normalized.history);
   }
   return mergeHistories(histories);
 }

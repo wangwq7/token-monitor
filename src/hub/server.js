@@ -38,14 +38,24 @@ function createHub({
     writeJsonAtomic(dataFile, store);
   }
 
+  // Merged history is derived purely from device records, which only change in
+  // ingest/deleteDevice — cache it so SSE snapshots and REST polls between
+  // ingests don't re-merge a year of daily entries per device on every read.
+  let historyCache = null;
+
+  function mergedHistory() {
+    if (!historyCache) historyCache = aggregateHistory(Object.values(store.devices));
+    return historyCache;
+  }
+
   function getStats() {
     const stats = aggregateDevices(Object.values(store.devices), staleAfterMs);
-    stats.historyPreview = historyPreview(aggregateHistory(Object.values(store.devices), staleAfterMs));
+    stats.historyPreview = historyPreview(mergedHistory());
     return stats;
   }
 
   function getHistory() {
-    return aggregateHistory(Object.values(store.devices), staleAfterMs);
+    return mergedHistory();
   }
 
   const sseClients = new Set();
@@ -78,6 +88,7 @@ function createHub({
     }
     const record = mergeDeviceRecord(store.devices[String(payload.deviceId || payload.id)], { ...payload, receivedAt: new Date().toISOString() });
     store.devices[record.deviceId] = record;
+    historyCache = null;
     persist();
     broadcastStats('ingest');
     return record;
@@ -85,6 +96,7 @@ function createHub({
 
   function deleteDevice(deviceId) {
     delete store.devices[deviceId];
+    historyCache = null;
     persist();
     broadcastStats('delete');
   }

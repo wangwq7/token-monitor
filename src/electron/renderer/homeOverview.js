@@ -238,20 +238,28 @@
   // live period totals so the home heatmap/trend agree with the number shown above them
   // — cost matters because dailyWithHeatIntensity colours cells by cost when any exists,
   // so an appended today with cost 0 would render as an empty cell. Append a today row
-  // when the frozen snapshot predates today (app opened before midnight). Returns a new
-  // array; the input is never mutated.
-  function patchDailyToday(daily, todayDate, todayTotal, todayCost) {
+  // when the frozen snapshot predates today (app opened before midnight). `breakdown`
+  // carries the live per-model/per-client maps (hub-aggregated across devices) so the
+  // model-stacked day bar tracks the live total instead of frozen proportions — and an
+  // appended today is never a colorless "unknown" run. Returns a new array; the input
+  // is never mutated.
+  function patchDailyToday(daily, todayDate, todayTotal, todayCost, breakdown) {
     const rows = Array.isArray(daily) ? daily.slice() : [];
     const date = String(todayDate || '').slice(0, 10);
     if (!date) return rows;
     const tokens = finiteNumber(todayTotal) || 0;
     const cost = finiteNumber(todayCost) || 0;
+    const patch = { tokens, cost };
+    if (breakdown && typeof breakdown === 'object') {
+      if (breakdown.perModel && typeof breakdown.perModel === 'object') patch.perModel = breakdown.perModel;
+      if (breakdown.perClient && typeof breakdown.perClient === 'object') patch.perClient = breakdown.perClient;
+    }
     const idx = rows.findIndex((row) => String(row?.date).slice(0, 10) === date);
     if (idx === -1) {
-      rows.push({ date, tokens, cost });
+      rows.push({ date, ...patch });
       return rows;
     }
-    rows[idx] = Object.assign({}, rows[idx], { tokens, cost });
+    rows[idx] = Object.assign({}, rows[idx], patch);
     return rows;
   }
 

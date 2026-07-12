@@ -56,6 +56,18 @@ test('Home activity heatmap is a scaled copy of the dashboard heatmap', () => {
   assert.match(rule(css, '.home-activity-canvas .heat-month'), /fill:\s*rgba\(var\(--line-rgb\), 0\.5\)/);
 });
 
+test('Home live cards reflow before text can overlap in narrow modules', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/styles.css'), 'utf8');
+  assert.match(css, /\.home-module-live\s*\{[^}]*container-type:\s*inline-size/);
+  assert.match(css, /\.live-hero-head\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto/);
+  assert.match(css, /\.live-hero-title-wrap\s*\{[^}]*min-width:\s*0[^}]*overflow:\s*hidden/);
+  assert.match(css, /\.live-hero-metrics\s*\{[^}]*min-width:\s*max-content/);
+  assert.match(css, /\.live-model-row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(css, /@container \(max-width:\s*600px\)[\s\S]*?\.home-live-count-3-4[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(css, /@container \(max-width:\s*280px\)[\s\S]*?\.live-hero-head[\s\S]*?grid-template-columns:\s*auto minmax\(0, 1fr\)/);
+  assert.match(css, /@container \(max-width:\s*280px\)[\s\S]*?\.live-hero-metrics[\s\S]*?grid-column:\s*2/);
+});
+
 test('Home module selection is independent from main view preferences', () => {
   const rendererSource = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/app.js'), 'utf8');
   const match = rendererSource.match(/function homeModuleIds\(\) \{([\s\S]*?)\n\}/);
@@ -372,22 +384,68 @@ test('patchDailyToday appends today with live cost so its heatmap cell is not em
   assert.equal(appended.cost, 492.5); // intensity uses cost — a 0 here renders today as empty
 });
 
+test('patchDailyToday carries the live per-model breakdown so multi-device day bars stay colored', () => {
+  // In host/sync mode today's breakdown is the hub aggregate across every device.
+  // Without carrying perModel, an appended today renders as one colorless "unknown"
+  // run; overwriting an existing bucket would keep frozen proportions at a stale total.
+  const breakdown = { perModel: { 'glm-5.2': { tokens: 40_000_000 }, 'gpt-5.5': { tokens: 21_700_000 } } };
+  const appended = patchDailyToday([{ date: '2026-07-06', tokens: 200, cost: 2 }], '2026-07-07', 61_700_000, 492.5, breakdown);
+  const today = appended.find((d) => d.date === '2026-07-07');
+  assert.deepEqual(today.perModel, breakdown.perModel);
+
+  const overwritten = patchDailyToday(
+    [{ date: '2026-07-07', tokens: 61_500_000, cost: 490, perModel: { 'glm-5.2': { tokens: 61_500_000 } } }],
+    '2026-07-07', 61_700_000, 492.5, breakdown
+  );
+  assert.deepEqual(overwritten[0].perModel, breakdown.perModel); // live maps replace the frozen ones
+});
+
 test('renderHomeTrendsModule patches the activity today cell with the live period total', () => {
   const rendererSource = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/app.js'), 'utf8');
   const match = rendererSource.match(/function renderHomeTrendsModule\(\) \{([\s\S]*?)\n\}\n\nfunction renderHome/);
   assert.ok(match, 'renderHomeTrendsModule exists');
   assert.match(match[1], /patchDailyToday\([\s\S]*?totalTokens/);
+  // The live hub-aggregated model map rides along so day bars stay stacked.
+  assert.match(match[1], /fallbackToday \? \{ perModel: fallbackToday\.perModel, perClient: fallbackToday\.perClient \} : null/);
 });
 
-test('renderHomeTrendsModule keeps day bars stacked by tool and month heatmap at full-month small-cell scale', () => {
+test('renderHomeTrendsModule uses horizontal model-stacked day bars and a three-row month grid', () => {
   const rendererSource = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/app.js'), 'utf8');
   const match = rendererSource.match(/function renderHomeTrendsModule\(\) \{([\s\S]*?)\n\}\n\nfunction renderHome/);
   assert.ok(match, 'renderHomeTrendsModule exists');
-  assert.match(match[1], /const perClient = d && typeof d\.perClient === 'object'/);
-  assert.match(match[1], /colorFor:\s*homeActivityBarColor/);
+  assert.match(match[1], /const perModel = d && typeof d\.perModel === 'object'/);
+  assert.match(match[1], /charts\.horizontalBarsChart\(barPoints/);
+  assert.match(match[1], /stackBy:\s*'model'/);
+  assert.match(match[1], /charts\.horizontalBarsChartSvg\(barModel/);
+  assert.match(match[1], /rowLabel:\s*\(bar\) => trendShortLabel/);
+  assert.match(match[1], /setupHomeActivityBarHover\(barWrap\)/);
+  assert.match(match[1], /colorFor:\s*modelDisplayColor/);
   assert.match(match[1], /stackGap:\s*2/);
-  assert.match(match[1], /const currentMonthEnd = monthEndKey\(currentMonth\) \|\| today/);
-  assert.match(match[1], /endDate:\s*currentMonthEnd/);
+  assert.match(match[1], /charts\.monthActivityGrid\(dailyWithHeatIntensity\(heatPoints\)/);
+  assert.match(match[1], /month:\s*currentMonth, rows:\s*3/);
+});
+
+test('hovering a stacked run names the model; empty track still reports the day total', () => {
+  const rendererSource = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/app.js'), 'utf8');
+  const hover = rendererSource.match(/function setupHomeActivityBarHover\(root\) \{([\s\S]*?)\n\}/);
+  assert.ok(hover, 'setupHomeActivityBarHover exists');
+  assert.match(hover[1], /closest\('\.bar-seg\[data-model\]'\)/);
+  assert.match(hover[1], /const row = segment \? null : hovered\?\.closest\('\.bar-hover\[data-d\]'\)/);
+  assert.match(hover[1], /data-home-activity-tooltip-name[\s\S]*segment \? \(segment\.dataset\.model \|\| ''\) : ''/);
+  // The shared tooltip gains a name line; heatmap-cell hovers must clear it.
+  assert.match(rendererSource, /home-activity-tooltip-name/);
+  const cellHover = rendererSource.match(/function setupHomeActivityHover\(scroller\) \{([\s\S]*?)\n\}\n\n/);
+  assert.ok(cellHover, 'setupHomeActivityHover exists');
+  assert.match(cellHover[1], /data-home-activity-tooltip-name]'\)\.textContent = ''/);
+  // No legend: the chart itself answers "which model" on hover.
+  assert.doesNotMatch(rendererSource, /home-activity-legend/);
+  // Every module colors models through the one shared palette function.
+  assert.match(rendererSource, /color: modelDisplayColor\(model\)/);           // model breakdown rows
+  assert.match(rendererSource, /modelColor: modelDisplayColor/);               // session rows
+  assert.match(rendererSource, /fill\.style\.background = modelDisplayColor\(model\)/); // live model bars
+  const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/dashboard.js'), 'utf8');
+  assert.match(dashboardSource, /charts\.modelDisplayColor\(key\)/);
+  assert.match(dashboardSource, /buildCol\('dashboard\.stack\.model', modelTotals, charts\.modelDisplayColor\)/);
 });
 
 test('renderHomeTrendsModule falls back to the live today period while history is still empty', () => {
@@ -396,7 +454,7 @@ test('renderHomeTrendsModule falls back to the live today period while history i
   assert.ok(match, 'renderHomeTrendsModule exists');
   assert.match(match[1], /const fallbackToday = periodDailyPoint\(today, todayPeriod\)/);
   assert.match(match[1], /const displayDaily = rawDaily\.length > 0 \? rawDaily : \(fallbackToday \? \[fallbackToday\] : \[\]\)/);
-  assert.match(match[1], /patchDailyToday\(displayDaily,/);
+  assert.match(match[1], /patchDailyToday\(\s*displayDaily,/);
 });
 
 test('historyPreviewKey is empty for no days and changes as the daily tail moves', () => {

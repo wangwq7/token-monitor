@@ -7,9 +7,9 @@ const test = require('node:test');
 
 const charts = require('../../src/electron/renderer/usageCharts');
 const {
-  clientColors, modelVendorFor, modelColor, clampDaily,
-  dailyBarsChart, candleChart, contribHeatmap, statsCards,
-  barsChartSvg, candleChartSvg, heatmapSvg, statsCardsHtml, statCardColumnWidths
+  clientColors, modelVendorFor, clampDaily,
+  dailyBarsChart, horizontalBarsChart, candleChart, contribHeatmap, statsCards,
+  barsChartSvg, horizontalBarsChartSvg, candleChartSvg, heatmapSvg, statsCardsHtml, statCardColumnWidths
 } = charts;
 
 test('usageCharts exports every symbol app.js destructures from it', () => {
@@ -32,12 +32,65 @@ test('clientColors carries the known palette and a default', () => {
   assert.equal(typeof clientColors.default, 'string');
 });
 
-test('modelVendorFor maps families and modelColor falls back deterministically', () => {
+test('modelVendorFor maps model names onto vendor families', () => {
   assert.equal(modelVendorFor('claude-sonnet-4'), 'claude');
   assert.equal(modelVendorFor('gpt-5'), 'codex');
   assert.equal(modelVendorFor('doubao-seed-1.6'), 'doubao');
-  assert.equal(modelColor('claude-opus'), clientColors.claude);
-  assert.equal(modelColor('totally-unknown'), modelColor('totally-unknown')); // stable
+  assert.equal(modelVendorFor('totally-unknown'), null);
+});
+
+function hueOf(hex) {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex);
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b); const min = Math.min(r, g, b); const d = max - min;
+  if (d === 0) return 0;
+  let h;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+  return h * 360;
+}
+
+function luminanceOf(hex) {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex);
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const c = parseInt(m[1].slice(i, i + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+test('modelDisplayColor gives GLM an orange family and DeepSeek a green family', () => {
+  const glm = charts.modelDisplayColor('glm-5.2');
+  const glmHue = hueOf(glm);
+  assert.ok(glmHue >= 20 && glmHue <= 48, `glm hue ${glmHue} should be orange`);
+  const deepseek = charts.modelDisplayColor('deepseek-v4-flash');
+  const dsHue = hueOf(deepseek);
+  assert.ok(dsHue >= 120 && dsHue <= 170, `deepseek hue ${dsHue} should be green`);
+});
+
+test('modelDisplayColor separates gpt tiers by shade within one hue family', () => {
+  const mini = charts.modelDisplayColor('gpt-5.4-mini-2026-03-17');
+  const pro = charts.modelDisplayColor('gpt-5-pro');
+  const mid = charts.modelDisplayColor('gpt-5.5');
+  assert.notEqual(mini, pro);
+  assert.notEqual(mini, mid);
+  const hues = [mini, pro, mid].map(hueOf);
+  for (const h of hues) assert.ok(Math.abs(h - hues[0]) < 12, `gpt hues stay in one family: ${hues}`);
+  assert.ok(luminanceOf(mini) > luminanceOf(pro), 'mini tier is lighter than pro tier');
+});
+
+test('modelDisplayColor never yields dark marks, even for black-branded vendors', () => {
+  const surface = luminanceOf('#303438');
+  for (const model of [
+    'glm-5-max', 'gpt-5-pro', 'deepseek-pro', 'claude-opus-4-6-thinking', 'qwen3-max',
+    'kimi-k3-think', 'grok-4-heavy', 'mimo-x4.5', 'cursor-max-auto', 'llama-5-max', 'big-pickle', 'totally-unknown-model'
+  ]) {
+    const color = charts.modelDisplayColor(model);
+    const ratio = (luminanceOf(color) + 0.05) / (surface + 0.05);
+    assert.ok(ratio >= 3, `${model} → ${color} contrast ${ratio.toFixed(2)} must be >= 3`);
+    assert.equal(charts.modelDisplayColor(model), color); // deterministic
+  }
 });
 
 test('clampDaily keeps the last N days, or all for falsy/all', () => {
@@ -75,6 +128,29 @@ test('barsChartSvg can inset stacked segments to create a visible surface gap', 
   const svg = barsChartSvg(model, { colorFor: (k) => clientColors[k] || clientColors.default, stackGap: 2, axisLabel: () => '' });
   assert.match(svg, /<rect x="0" y="52" width="100" height="48" fill="#cc7c5e" class="bar-seg"><\/rect>/);
   assert.match(svg, /<path d="M0,50 L0,3 Q0,0 3,0/);
+});
+
+test('horizontalBarsChartSvg draws date rows with right-rounded stacked ends and hover data', () => {
+  const model = horizontalBarsChart([
+    { date: '2026-07-10', perClient: { claude: { tokens: 80 }, codex: { tokens: 20 } } }
+  ], { width: 200, height: 30, padTop: 0, padRight: 0, padBottom: 0, padLeft: 40, gap: 0 });
+  const svg = horizontalBarsChartSvg(model, {
+    colorFor: (key) => clientColors[key] || clientColors.default,
+    rowLabel: () => '7/10',
+    radius: 4,
+    stackGap: 2
+  });
+
+  assert.match(svg, /class="dash-chart dash-chart-horizontal"/);
+  assert.match(svg, /class="axis-label row-axis"[^>]*>7\/10<\/text>/);
+  assert.match(svg, /data-d="2026-07-10" data-t="100"/);
+  assert.match(svg, /class="bar-track"/);
+  assert.match(svg, /<path d="M/);
+  // Every stacked run identifies its model for the hover tooltip...
+  assert.match(svg, /data-model="claude" data-t="80" data-d="2026-07-10"/);
+  assert.match(svg, /data-model="codex" data-t="20" data-d="2026-07-10"/);
+  // ...and renders AFTER the row-wide hover rect so the pointer hits the run.
+  assert.ok(svg.indexOf('class="bar-hover"') < svg.indexOf('data-model="claude"'), 'segments must render above the row hover target');
 });
 
 test('barsChartSvg always emits a data-indexed hover target and draws y-axis ticks on request', () => {

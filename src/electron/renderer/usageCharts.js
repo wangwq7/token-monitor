@@ -79,6 +79,88 @@
     return { width: o.width, height: o.height, plot: { x: o.padLeft, y: o.padTop, w: innerW, h: innerH }, maxTotal, keys, bars };
   }
 
+  function horizontalBarsChart(series, options) {
+    const o = Object.assign(
+      { width: 300, height: 108, padTop: 3, padRight: 4, padBottom: 3, padLeft: 34, gap: 0.38, maxBarHeight: 0, stackBy: 'client', metric: 'tokens', labelKey: 'date' },
+      options || {}
+    );
+    const field = o.stackBy === 'model' ? 'perModel' : 'perClient';
+    const entries = Array.isArray(series) ? series : [];
+    const keyTotals = {};
+    for (const entry of entries) {
+      for (const [key, value] of Object.entries(entry[field] || {})) {
+        keyTotals[key] = (keyTotals[key] || 0) + n(value && value[o.metric]);
+      }
+    }
+    const keys = Object.keys(keyTotals).sort((a, b) => keyTotals[b] - keyTotals[a] || a.localeCompare(b));
+    const totals = entries.map((entry) => sumMetric(entry[field], o.metric));
+    const maxTotal = Math.max(1, ...totals);
+    const innerW = Math.max(0, o.width - o.padLeft - o.padRight);
+    const innerH = Math.max(0, o.height - o.padTop - o.padBottom);
+    const slot = entries.length ? innerH / entries.length : innerH;
+    const naturalBarHeight = slot * (1 - o.gap);
+    const maxBarHeight = Math.max(0, n(o.maxBarHeight));
+    const barHeight = maxBarHeight > 0 ? Math.min(naturalBarHeight, maxBarHeight) : naturalBarHeight;
+
+    const bars = entries.map((entry, index) => {
+      const y = o.padTop + index * slot + (slot - barHeight) / 2;
+      const source = entry[field] || {};
+      let cumulative = 0;
+      const segments = [];
+      for (const key of keys) {
+        if (source[key] === undefined) continue;
+        const value = n(source[key][o.metric]);
+        if (value <= 0) continue;
+        const width = innerW * value / maxTotal;
+        segments.push({ key, value, x: o.padLeft + cumulative, y, width, height: barHeight });
+        cumulative += width;
+      }
+      return {
+        label: entry[o.labelKey], index, x: o.padLeft, y, width: innerW, height: barHeight,
+        hitY: o.padTop + index * slot, hitHeight: slot, total: totals[index], segments
+      };
+    });
+
+    return { width: o.width, height: o.height, plot: { x: o.padLeft, y: o.padTop, w: innerW, h: innerH }, maxTotal, keys, bars };
+  }
+
+  // Dates advance left-to-right across three rows. Months up to 30 days keep a
+  // stable 10-column footprint; a 31-day month uses 11 columns so no day is lost.
+  function monthActivityGrid(daily, options) {
+    const o = Object.assign({ month: '', rows: 3, cell: 9, gap: 3 }, options || {});
+    const entries = Array.isArray(daily) ? daily : [];
+    const inferred = entries.map((entry) => String(entry?.date || '').slice(0, 7))
+      .filter((key) => /^\d{4}-\d{2}$/.test(key)).sort().pop() || '';
+    const month = /^\d{4}-\d{2}$/.test(String(o.month || '')) ? String(o.month) : inferred;
+    if (!month) return { cells: [], width: 0, height: 0, weeks: 0, columns: 0, rows: 0, monthLabels: [] };
+    const match = /^(\d{4})-(\d{2})$/.exec(month);
+    const daysInMonth = new Date(Date.UTC(Number(match[1]), Number(match[2]), 0)).getUTCDate();
+    const rows = Math.max(1, Math.round(n(o.rows) || 3));
+    const cell = Math.max(1, n(o.cell) || 9);
+    const gap = Math.max(0, n(o.gap));
+    const values = new Map(entries.map((entry) => [String(entry?.date || '').slice(0, 10), entry || {}]));
+    const pitch = cell + gap;
+    const columns = Math.ceil(daysInMonth / rows);
+    const cells = [];
+    for (let index = 0; index < daysInMonth; index++) {
+      const day = index + 1;
+      const date = `${month}-${String(day).padStart(2, '0')}`;
+      const value = values.get(date) || {};
+      const row = Math.floor(index / columns);
+      const col = index % columns;
+      cells.push({
+        date, day, row, col,
+        intensity: n(value.intensity), tokens: n(value.tokens), cost: n(value.cost),
+        x: col * pitch, y: row * pitch, size: cell
+      });
+    }
+    return {
+      cells, weeks: columns, columns, rows, monthLabels: [{ col: 0, label: month }], cell, gap,
+      width: columns * pitch - gap,
+      height: rows * pitch - gap
+    };
+  }
+
   // Candlesticks from a daily-total series. Each candle aggregates `bucketDays`
   // consecutive calendar days into one OHLC bar — open = first day, close = last day,
   // high/low = busiest/quietest day in the bucket — so the high/low can protrude past
@@ -338,13 +420,125 @@
     return null;
   }
 
-  function modelColor(model) {
-    const vendor = modelVendorFor(model);
-    if (vendor && clientColors[vendor]) return clientColors[vendor];
+  // Chart palette for MODELS, distinct from the tool/client brand colors above:
+  // every family reads on the dark surface (no black/near-black brand marks),
+  // and models within one family share the hue while their tier picks the shade
+  // (mini/flash lighter, pro/max/opus deeper), so gpt-5.x variants stay
+  // related-but-distinguishable. Contrast vs the #303438 surface >= 3:1 and
+  // co-occurring family pairs were checked for Lab separation.
+  const MODEL_FAMILY_COLORS = {
+    claude: '#cc7c5e',
+    codex: '#22a3c2',
+    zai: '#f2a33c',
+    deepseek: '#4dbf7e',
+    gemini: '#5b8def',
+    xai: '#a3aef5',
+    meta: '#4f9cf7',
+    mistral: '#fb923c',
+    qwen: '#8b7bf5',
+    moonshot: '#e0699e',
+    cohere: '#3fae8e',
+    xiaomi: '#ee6352',
+    minimax: '#f23f5d',
+    doubao: '#37a4ff',
+    volcengine: '#37a4ff',
+    cursor: '#9d8cff',
+    opencode: '#52c4b0'
+  };
+  const MODEL_FALLBACK_COLORS = ['#6ab4f0', '#a57df0', '#f0d66a', '#f06a7b', '#52c4b0', '#e0699e'];
+  const MODEL_SHADE_OFFSETS = [-0.09, -0.045, 0, 0.05, 0.1];
+
+  function hexToHslParts(hex) {
+    const match = /^#([0-9a-fA-F]{6})$/.exec(String(hex || ''));
+    if (!match) return null;
+    const r = parseInt(match[1].slice(0, 2), 16) / 255;
+    const g = parseInt(match[1].slice(2, 4), 16) / 255;
+    const b = parseInt(match[1].slice(4, 6), 16) / 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    if (max === min) return { h: 0, s: 0, l };
+    const d = max - min;
+    const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    let h;
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    else if (max === g) h = ((b - r) / d + 2) / 6;
+    else h = ((r - g) / d + 4) / 6;
+    return { h, s, l };
+  }
+
+  function hslPartsToHex({ h, s, l }) {
+    const hue = (h % 1 + 1) % 1;
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    const channel = (t) => {
+      let x = (t % 1 + 1) % 1;
+      if (x < 1 / 6) return p + (q - p) * 6 * x;
+      if (x < 1 / 2) return q;
+      if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6;
+      return p;
+    };
+    const toHex = (v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
+    return `#${toHex(channel(hue + 1 / 3))}${toHex(channel(hue))}${toHex(channel(hue - 1 / 3))}`;
+  }
+
+  function modelNameHash(model) {
     const name = String(model || '').toLowerCase();
     let hash = 0;
     for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-    return fallbackModelColors[Math.abs(hash) % fallbackModelColors.length];
+    return Math.abs(hash);
+  }
+
+  // Which shade of the family hue this model gets. Tier keywords are the primary
+  // signal (lighter for the small/fast tiers, deeper for the flagship tiers);
+  // unrecognized names spread deterministically over the middle shades so two
+  // sibling versions (gpt-5.5 vs gpt-5.6) still separate.
+  function modelShadeIndex(model) {
+    const name = String(model || '').toLowerCase();
+    if (/mini|nano|flash|lite|tiny|small|air|haiku|instant/.test(name)) return 4;
+    if (/opus|\bpro\b|-pro|max|ultra|think|heavy|plus/.test(name)) return 0;
+    return 1 + (modelNameHash(model) % 3);
+  }
+
+  function relativeLuminance(hex) {
+    const match = /^#([0-9a-fA-F]{6})$/.exec(String(hex || ''));
+    if (!match) return 0;
+    const [r, g, b] = [0, 2, 4].map((i) => {
+      const channel = parseInt(match[1].slice(i, i + 2), 16) / 255;
+      return channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  }
+
+  // Contrast of the dark chart surface (#303438) plus the 3:1 graphics floor.
+  const SURFACE_LUMINANCE = relativeLuminance('#303438');
+
+  // Pure function of the (lowercased) model name, called per stacked segment
+  // and per breakdown row on every stats push — memoize so a render costs one
+  // Map hit per model instead of regex + HSL + contrast-loop work each time.
+  const modelDisplayColorCache = new Map();
+
+  function modelDisplayColor(model) {
+    const key = String(model || '').toLowerCase();
+    const cached = modelDisplayColorCache.get(key);
+    if (cached) return cached;
+    const vendor = modelVendorFor(model);
+    const base = (vendor && MODEL_FAMILY_COLORS[vendor])
+      || MODEL_FALLBACK_COLORS[modelNameHash(model) % MODEL_FALLBACK_COLORS.length];
+    const parts = hexToHslParts(base);
+    if (!parts) return base;
+    const shifted = parts.l + MODEL_SHADE_OFFSETS[modelShadeIndex(model)];
+    // Keep every shade readable on the dark surface: clamp the HSL band, then
+    // enforce the WCAG 3:1 graphics contrast floor — saturated violet/red hues
+    // can dip below it even inside the lightness band.
+    let l = Math.max(0.46, Math.min(0.78, shifted));
+    let hex = hslPartsToHex({ h: parts.h, s: parts.s, l });
+    while ((relativeLuminance(hex) + 0.05) / (SURFACE_LUMINANCE + 0.05) < 3 && l < 0.9) {
+      l += 0.02;
+      hex = hslPartsToHex({ h: parts.h, s: parts.s, l });
+    }
+    modelDisplayColorCache.set(key, hex);
+    return hex;
   }
 
   function clampDaily(daily, range) {
@@ -406,6 +600,39 @@
     const rr = Math.max(0, Math.min(r, w / 2, h));
     return `M${svgRound(x)},${svgRound(y + h)} L${svgRound(x)},${svgRound(y + rr)} Q${svgRound(x)},${svgRound(y)} ${svgRound(x + rr)},${svgRound(y)} `
       + `L${svgRound(x + w - rr)},${svgRound(y)} Q${svgRound(x + w)},${svgRound(y)} ${svgRound(x + w)},${svgRound(y + rr)} L${svgRound(x + w)},${svgRound(y + h)} Z`;
+  }
+
+  // Rect with only the right two corners rounded, used by horizontal bar ends.
+  function rightRoundedPath(x, y, w, h, r) {
+    const rr = Math.max(0, Math.min(r, w, h / 2));
+    return `M${svgRound(x)},${svgRound(y)} L${svgRound(x + w - rr)},${svgRound(y)} Q${svgRound(x + w)},${svgRound(y)} ${svgRound(x + w)},${svgRound(y + rr)} `
+      + `L${svgRound(x + w)},${svgRound(y + h - rr)} Q${svgRound(x + w)},${svgRound(y + h)} ${svgRound(x + w - rr)},${svgRound(y + h)} L${svgRound(x)},${svgRound(y + h)} Z`;
+  }
+
+  function horizontalBarsChartSvg(model, options) {
+    const o = Object.assign({ colorFor: () => '#6ab4f0', rowLabel: () => '', radius: 3, stackGap: 0 }, options || {});
+    const p = model.plot;
+    const parts = (model.bars || []).map((bar) => {
+      const segments = bar.segments || [];
+      const end = segments.length - 1;
+      const track = `<rect x="${svgRound(p.x)}" y="${svgRound(bar.y)}" width="${svgRound(p.w)}" height="${svgRound(bar.height)}" rx="${svgRound(Math.min(o.radius, bar.height / 2))}" class="bar-track"></rect>`;
+      const drawn = segments.map((segment, index) => {
+        const gap = Math.min(Math.max(0, Number(o.stackGap) || 0), Math.max(0, segment.width) / 2);
+        const width = Math.max(0, segment.width - (index < end ? gap : 0));
+        const segData = `data-model="${escapeXml(segment.key)}" data-t="${svgRound(segment.value)}" data-d="${escapeXml(bar.label)}"`;
+        if (index === end && width > 0) {
+          return `<path d="${rightRoundedPath(segment.x, segment.y, width, segment.height, o.radius)}" fill="${o.colorFor(segment.key)}" ${segData} class="bar-seg"></path>`;
+        }
+        return `<rect x="${svgRound(segment.x)}" y="${svgRound(segment.y)}" width="${svgRound(width)}" height="${svgRound(segment.height)}" fill="${o.colorFor(segment.key)}" ${segData} class="bar-seg"></rect>`;
+      }).join('');
+      const hover = `<rect data-i="${bar.index}" data-d="${escapeXml(bar.label)}" data-t="${svgRound(bar.total)}" x="0" y="${svgRound(bar.hitY)}" width="${svgRound(model.width)}" height="${svgRound(bar.hitHeight)}" class="bar-hover"></rect>`;
+      const label = `<text class="axis-label row-axis" x="${svgRound(p.x - 5)}" y="${svgRound(bar.y + bar.height / 2 + 3)}" text-anchor="end">${escapeXml(o.rowLabel(bar, bar.index, model.bars))}</text>`;
+      // Segments render on top of the row-wide hover rect so pointing at a
+      // colored run identifies the model; the gaps still hit the row target.
+      return track + hover + drawn + label;
+    }).join('');
+    const baseline = `<line class="axis-base" x1="${svgRound(p.x)}" y1="${svgRound(p.y)}" x2="${svgRound(p.x)}" y2="${svgRound(p.y + p.h)}"></line>`;
+    return `<svg class="dash-chart dash-chart-horizontal" viewBox="0 0 ${model.width} ${model.height}" width="100%" height="100%">${baseline}${parts}</svg>`;
   }
 
   function barsChartSvg(model, options) {
@@ -539,10 +766,10 @@
   }
 
   return {
-    weekStartKey, dailyBarsChart, candleChart, contribHeatmap, rollingYearHeatmap, statsCards, sparklinePreview,
+    weekStartKey, dailyBarsChart, horizontalBarsChart, monthActivityGrid, candleChart, contribHeatmap, rollingYearHeatmap, statsCards, sparklinePreview,
     areaLineChart, areaLineSvg,
     selectPreviewSeries, patchTodayBar, sparklineSvg,
-    clientColors, fallbackModelColors, modelVendorFor, modelColor, clampDaily,
-    barsChartSvg, candleChartSvg, heatmapSvg, statsCardsHtml, statCardColumnWidths
+    clientColors, fallbackModelColors, modelVendorFor, modelDisplayColor, clampDaily,
+    barsChartSvg, horizontalBarsChartSvg, candleChartSvg, heatmapSvg, statsCardsHtml, statCardColumnWidths
   };
 });

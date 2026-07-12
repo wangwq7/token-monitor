@@ -64,6 +64,47 @@ test('ingest without a deviceId throws', () => {
   }
 });
 
+test('persisted history remains available when the device presence record is stale', () => {
+  const dataFile = tempDataFile();
+  const old = '2026-06-01T00:00:00.000Z';
+  fs.writeFileSync(dataFile, JSON.stringify({
+    version: 1,
+    devices: {
+      'dev-old': {
+        deviceId: 'dev-old',
+        updatedAt: old,
+        receivedAt: old,
+        today: { totalTokens: 5 },
+        history: {
+          daily: [{ date: '2026-06-01', tokens: 42, cost: 1, perClient: {}, perModel: {} }],
+          monthly: [{ month: '2026-06', tokens: 42, cost: 1, perClient: {}, perModel: {} }],
+          summary: { totalTokens: 42 }
+        }
+      }
+    }
+  }));
+  const hub = createHub({ port: 0, host: '127.0.0.1', secret: '', staleAfterMs: 10 * 60 * 1000, dataFile, logger: { error() {} } });
+  try {
+    const stats = hub.getStats();
+    assert.equal(stats.devices[0].stale, true); // presence still reports stale
+    assert.equal(stats.historyPreview.daily.length, 1);
+    assert.equal(stats.historyPreview.daily[0].tokens, 42);
+    assert.equal(hub.getHistory().daily[0].tokens, 42);
+    // The merged history is cached between reads; a new ingest must invalidate it.
+    hub.ingest({
+      deviceId: 'dev-old',
+      history: {
+        daily: [{ date: '2026-06-01', tokens: 50, cost: 1, perClient: {}, perModel: {} }],
+        monthly: [{ month: '2026-06', tokens: 50, cost: 1, perClient: {}, perModel: {} }],
+        summary: { totalTokens: 50 }
+      }
+    });
+    assert.equal(hub.getHistory().daily[0].tokens, 50);
+  } finally {
+    fs.rmSync(dataFile, { force: true });
+  }
+});
+
 test('onStats fires on ingest and on deleteDevice, and unsubscribe stops it', () => {
   const dataFile = tempDataFile();
   const hub = createHub({ port: 0, host: '127.0.0.1', secret: '', dataFile, logger: { error() {} } });

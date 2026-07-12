@@ -29,7 +29,7 @@ test('main registers dashboard handlers and a sender-scoped close', () => {
 
 test('getDashboardHistory mirrors the local/sync split of fetchStats', () => {
   const main = read('src', 'electron', 'main.js');
-  assert.match(main, /aggregateHistory\(localDevice \? \[localDevice\] : \[\], 0\)/);
+  assert.match(main, /aggregateHistory\(localDevice \? \[localDevice\] : \[\]\)/);
   assert.match(main, /\/api\/history/);
 });
 
@@ -47,7 +47,7 @@ test('dashboard history is gated by the historyEnabled setting', () => {
   const main = read('src', 'electron', 'main.js');
   assert.match(main, /historyEnabled:\s*true/);
   assert.match(main, /historyEnabled:\s*parseBoolean\(patch\.historyEnabled[\s\S]*?,\s*false\)/);
-  assert.match(main, /if \(settings\?\.historyEnabled === false\) return aggregateHistory\(\[\], 0\)/);
+  assert.match(main, /if \(settings\?\.historyEnabled === false\) return aggregateHistory\(\[\]\)/);
   assert.match(main, /historyEnabled:\s*settings\.historyEnabled !== false/);
 });
 

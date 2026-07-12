@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeImage, screen, session, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeImage, nativeTheme, screen, session, shell } = require('electron');
 const { defaultDeviceId, generateHubSecret, lanIpv4Addresses, loadDotEnv, pidFilePath, sharedDataDir } = require('../shared/config');
 const { installSafeStdout } = require('../shared/safeStdio');
 const { appVersion } = require('../shared/appVersion');
@@ -70,6 +70,8 @@ const { historyPreview } = require('../shared/history');
 const { readSessionDetail } = require('../shared/sessionDetail');
 const { startDiscordRpc, stopDiscordRpc, updateDiscordRpc } = require('./discordRpc');
 const linuxAutostart = require('./linuxAutostart');
+const windowsAutostart = require('./windowsAutostart');
+const themePresetsApi = require('./renderer/themePresets');
 const { buildTrayIcon, createTray, formatTrayText, pickUsageTrayIconId, popoverBounds } = require('./tray');
 const {
   macActivationPolicyMode,
@@ -145,7 +147,20 @@ const serviceStatusClient = createServiceStatusClient();
 const STATUS_PAGE_HOSTS = new Set(SERVICE_STATUS_PROVIDERS.map((provider) => new URL(provider.pageUrl).hostname));
 
 app.setName(APP_NAME);
-if (process.platform === 'win32') app.setAppUserModelId('com.javis.tokenmonitor');
+// One id for both the Windows shell identity and the autostart Run value.
+if (process.platform === 'win32') app.setAppUserModelId(windowsAutostart.APP_ID);
+
+// The DWM acrylic/mica backdrop tints to the OS theme. On a light-theme
+// Windows install every dropped renderer frame exposes a WHITE backdrop —
+// the intermittent white flashes on the desktop widget. Pin the app-level
+// theme to the widget's own (dark by default) palette so any exposed
+// backdrop frame is dark, and follow the user's theme if they pick a light one.
+function applyNativeThemeSource(source = settings) {
+  try {
+    nativeTheme.themeSource = themePresetsApi.isLightHex(source?.themeColors?.bg) ? 'light' : 'dark';
+  } catch (_) { /* nativeTheme unavailable in some test harnesses */ }
+}
+applyNativeThemeSource(null);
 
 // NOTE: the "portable" electron-builder target still runs from a %TEMP% extract
 // dir, but its userData resolves to the standard %APPDATA%\Token Monitor (same as
@@ -761,6 +776,7 @@ function ensureSettingsLoaded() {
   if (settings) return settings;
   settings = readSettings();
   rendererViewState = normalizeInitialRendererViewState(settings.lastViewState, rendererViewState);
+  applyNativeThemeSource(settings);
   return settings;
 }
 
@@ -1133,30 +1149,42 @@ function saveSettings() {
 
 function loginItemEnabledHere() {
   if (!app.isPackaged) return false;
-  // Electron login items only cover macOS/Windows; on Linux we manage an XDG
-  // autostart entry ourselves, which needs the AppImage runtime ($APPIMAGE).
   if (process.platform === 'linux') return linuxAutostart.autostartSupported();
-  return true;
+  if (process.platform === 'win32') return windowsAutostart.autostartSupported({ isPackaged: app.isPackaged });
+  return process.platform === 'darwin';
 }
+
+// Reading the Windows state spawns a blocking reg.exe query; it sits on the
+// startup path (syncLoginItemSettingFromOs) and on every renderer app:getInfo,
+// so cache the answer and refresh it only when we change the state ourselves.
+let loginItemStateCache = null;
 
 function currentLoginItemState() {
   if (!loginItemEnabledHere()) return false;
-  if (process.platform === 'linux') return linuxAutostart.isAutostartEnabled();
-  try { return Boolean(app.getLoginItemSettings().openAtLogin); }
-  catch (_) { return false; }
+  if (loginItemStateCache !== null) return loginItemStateCache;
+  let state;
+  if (process.platform === 'linux') state = linuxAutostart.isAutostartEnabled();
+  else if (process.platform === 'win32') state = windowsAutostart.isAutostartEnabled();
+  else {
+    try { state = Boolean(app.getLoginItemSettings().openAtLogin); }
+    catch (_) { state = false; }
+  }
+  loginItemStateCache = state;
+  return state;
 }
 
 function applyLoginItem(startAtLogin) {
   if (!loginItemEnabledHere()) return false;
-  if (process.platform === 'linux') return linuxAutostart.setAutostartEnabled(Boolean(startAtLogin));
-  app.setLoginItemSettings({
-    openAtLogin: Boolean(startAtLogin),
-    // Windows only: relaunch the login item with --hidden so the window stays
-    // hidden on autostart (see launchedHidden / reveal). args is ignored by
-    // macOS; macOS can't launch hidden natively on 13+ (deferred).
-    ...(process.platform === 'win32' ? { args: ['--hidden'] } : {})
-  });
-  return currentLoginItemState();
+  let state;
+  if (process.platform === 'linux') state = linuxAutostart.setAutostartEnabled(Boolean(startAtLogin));
+  else if (process.platform === 'win32') state = windowsAutostart.setAutostartEnabled(Boolean(startAtLogin));
+  else {
+    app.setLoginItemSettings({ openAtLogin: Boolean(startAtLogin) });
+    try { state = Boolean(app.getLoginItemSettings().openAtLogin); }
+    catch (_) { state = false; }
+  }
+  loginItemStateCache = state;
+  return state;
 }
 
 function syncLoginItemSettingFromOs() {
@@ -1235,7 +1263,29 @@ function applyWindowSettings() {
 }
 
 function nativeBlurEnabled(source = settings) {
+  // A Windows desktop-pinned acrylic surface can be discarded/recreated by DWM
+  // as desktop composition changes, briefly exposing a white clear frame. Keep
+  // desktop mode on a stable opaque compositor surface; floating/normal windows
+  // may still use the user's System Glass preference.
+  if (process.platform === 'win32' && source?.windowBehavior === 'desktop') return false;
   return floatingBubbleNativeGlassEnabled(source, floatingBubbleState, process.platform);
+}
+
+// The one description of how app windows composite, consumed by both window
+// factories and the rebuild check. Windows only has three shapes: acrylic
+// (opaque window, transparent clear color so the DWM backdrop shows), layered
+// transparent (glass off), and opaque desktop-pinned. The opaque surface takes
+// its clear color from the theme background so no white frame can be exposed.
+function windowSurface(source = settings) {
+  const glass = nativeBlurEnabled(source);
+  const transparent = process.platform !== 'win32'
+    ? true
+    : (source?.windowBehavior === 'desktop' ? false : !glass);
+  const bg = source?.themeColors?.bg;
+  const backgroundColor = (transparent || glass)
+    ? '#00000000'
+    : (themePresetsApi.isValidHex(bg) ? bg : themePresetsApi.DEFAULT_THEME.bg);
+  return { glass, transparent, backgroundColor };
 }
 
 function keepNativeBlurActive() {
@@ -1261,7 +1311,7 @@ function applyNativeMaterial(source = settings) {
 }
 
 function withHistoryPreview(stats, devices) {
-  const history = settings?.historyEnabled === false ? aggregateHistory([], 0) : aggregateHistory(devices, 0);
+  const history = settings?.historyEnabled === false ? aggregateHistory([]) : aggregateHistory(devices);
   stats.historyPreview = historyPreview(history);
   return stats;
 }
@@ -2468,7 +2518,7 @@ function loadWindowFile(target, options = {}) {
 function createWindow(boundsOverride, options = {}) {
   ensureSettingsLoaded();
   const collapsedFloatingBubble = options.collapsedFloatingBubble === true;
-  const glass = nativeBlurEnabled();
+  const { glass, transparent, backgroundColor } = windowSurface(settings);
   const bounds = boundsOverride || restoredBounds() || DEFAULT_WINDOW;
   const collapsedSizeLimits = {
     minWidth: bounds.width,
@@ -2482,10 +2532,10 @@ function createWindow(boundsOverride, options = {}) {
     ...(typeof bounds.x === 'number' ? { x: bounds.x, y: bounds.y } : {}),
     ...(collapsedFloatingBubble ? collapsedSizeLimits : WINDOW_LIMITS),
     frame: false,
-    transparent: !(process.platform === 'win32' && glass),
+    transparent,
     resizable: !collapsedFloatingBubble,
     show: false,
-    backgroundColor: '#00000000',
+    backgroundColor,
     icon: APP_ICON_PATH,
     skipTaskbar: collapsedFloatingBubble || Boolean(settings?.trayMode),
     ...(collapsedFloatingBubble ? { fullscreenable: false, maximizable: false, minimizable: false } : {}),
@@ -2591,16 +2641,16 @@ function createDashboardWindow() {
     dashboardWindow.focus();
     return dashboardWindow;
   }
-  const glass = nativeBlurEnabled();
+  const { glass, transparent, backgroundColor } = windowSurface(settings);
   const win = new BrowserWindow({
     width: 920,
     height: 620,
     minWidth: 560,
     minHeight: 420,
     frame: false,
-    transparent: !(process.platform === 'win32' && glass),
+    transparent,
     show: false,
-    backgroundColor: '#00000000',
+    backgroundColor,
     icon: APP_ICON_PATH,
     skipTaskbar: false,
     ...(process.platform === 'darwin' && glass ? { vibrancy: 'hud', visualEffectState: 'active' } : {}),
@@ -2629,14 +2679,14 @@ function createDashboardWindow() {
 }
 
 async function getDashboardHistory() {
-  if (settings?.historyEnabled === false) return aggregateHistory([], 0);
+  if (settings?.historyEnabled === false) return aggregateHistory([]);
   if (mode === 'local') {
     // The local collector keeps localDevice.history current (watch + interval
     // ticks, with carry-forward), so read it directly — exactly as the hub
     // branch reads /api/history. Forcing a full collection tick here made the
     // fetch take seconds; on a quick close/reopen the response outlived the
     // renderer and was dropped, stranding the dashboard on its empty state.
-    return aggregateHistory(localDevice ? [localDevice] : [], 0);
+    return aggregateHistory(localDevice ? [localDevice] : []);
   }
   if (settings.hubMode === 'host' && embeddedHub) {
     // Host mode reads its own hub store in-process, so the dashboard history
@@ -2644,7 +2694,7 @@ async function getDashboardHistory() {
     return embeddedHub.hub.getHistory();
   }
   const { url: hubUrl, secret } = effectiveHubConfig();
-  if (!hubUrl) return aggregateHistory([], 0);
+  if (!hubUrl) return aggregateHistory([]);
   const url = `${hubUrl.replace(/\/$/, '')}/api/history`;
   const response = await fetch(url, { headers: secret ? { authorization: `Bearer ${secret}` } : {} });
   if (!response.ok) throw new Error(`Hub ${response.status}: ${(await response.text()).slice(0, 200)}`);
@@ -2725,7 +2775,7 @@ app.whenReady().then(() => {
     }
   });
   ipcMain.handle('settings:update', (_event, patch) => {
-    const previousNativeMaterial = nativeBlurEnabled();
+    const previousSurface = windowSurface(settings);
     const previousHubMode = settings.hubMode;
     const previousHubHostPort = settings.hubHostPort;
     const previousHubHostSecret = settings.hubHostSecret;
@@ -2875,8 +2925,12 @@ app.whenReady().then(() => {
     else if (settings.discordRpcEnabled && settings.currency !== previousCurrency && latestStats) updateDiscordRpc(latestStats, settings.currency);
     applyWindowSettings();
     syncFloatingBubbleAvailability();
-    const nextNativeMaterial = nativeBlurEnabled();
-    if (process.platform === 'win32' && previousNativeMaterial !== nextNativeMaterial) {
+    applyNativeThemeSource(settings);
+    // Glass and transparency are locked in at window creation on Windows, so a
+    // surface change (System Glass toggle, desktop-pin toggle) needs a rebuild.
+    const nextSurface = windowSurface(settings);
+    if (process.platform === 'win32'
+      && (previousSurface.glass !== nextSurface.glass || previousSurface.transparent !== nextSurface.transparent)) {
       rebuildWindow();
     } else {
       applyNativeMaterial();
