@@ -150,12 +150,15 @@ app.setName(APP_NAME);
 // One id for both the Windows shell identity and the autostart Run value.
 if (process.platform === 'win32') app.setAppUserModelId(windowsAutostart.APP_ID);
 
-// The DWM acrylic/mica backdrop tints to the OS theme. On a light-theme
-// Windows install every dropped renderer frame exposes a WHITE backdrop —
-// the intermittent white flashes on the desktop widget. Pin the app-level
-// theme to the widget's own (dark by default) palette so any exposed
-// backdrop frame is dark, and follow the user's theme if they pick a light one.
+// The Windows DWM acrylic/mica backdrop tints to the OS theme. On a light-theme
+// install every dropped renderer frame exposes a WHITE backdrop — the
+// intermittent white flashes on the desktop widget. Pin the app-level theme to
+// the widget's own (dark by default) palette so any exposed backdrop frame is
+// dark, and follow the user's theme if they pick a light one. Windows-only:
+// macOS vibrancy has no white-flash failure mode, and upstream mac behavior is
+// to follow the system appearance ('system').
 function applyNativeThemeSource(source = settings) {
+  if (process.platform !== 'win32') return;
   try {
     nativeTheme.themeSource = themePresetsApi.isLightHex(source?.themeColors?.bg) ? 'light' : 'dark';
   } catch (_) { /* nativeTheme unavailable in some test harnesses */ }

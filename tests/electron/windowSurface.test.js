@@ -9,7 +9,9 @@ const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'electron',
 
 test('app pins the DWM backdrop theme to the widget palette so exposed frames are never white', () => {
   // A light-theme OS draws a WHITE acrylic backdrop; any dropped renderer frame
-  // exposes it as a white flash on the desktop widget.
+  // exposes it as a white flash on the desktop widget. Windows-only: macOS has
+  // no DWM backdrop and must keep following the system appearance.
+  assert.match(main, /function applyNativeThemeSource\(source = settings\) \{\s*\n\s*if \(process\.platform !== 'win32'\) return;/);
   assert.match(main, /nativeTheme\.themeSource = themePresetsApi\.isLightHex\(source\?\.themeColors\?\.bg\) \? 'light' : 'dark'/);
   assert.match(main, /applyNativeThemeSource\(null\);/); // dark before any window exists
   assert.match(main, /rendererViewState = normalizeInitialRendererViewState\(settings\.lastViewState, rendererViewState\);\s*\n\s*applyNativeThemeSource\(settings\);/);

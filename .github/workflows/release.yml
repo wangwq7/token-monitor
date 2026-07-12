@@ -3,6 +3,9 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Manual runs build the same artifacts from any branch (e.g. to test a macOS
+  # build from a Windows dev machine) but skip the GitHub Release publish step.
+  workflow_dispatch:
 
 jobs:
   build:
@@ -33,9 +36,12 @@ jobs:
       - run: npm ci
       # APPIMAGE_EXTRACT_AND_RUN lets electron-builder's bundled appimagetool
       # run without libfuse2 (absent on the runners); a no-op on mac/win.
+      # CSC_IDENTITY_AUTO_DISCOVERY=false keeps mac builds deterministically
+      # unsigned instead of probing the runner keychain for an identity.
       - run: npm run dist:${{ matrix.target }}
         env:
           APPIMAGE_EXTRACT_AND_RUN: '1'
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - uses: actions/upload-artifact@v4
         with:
           name: token-monitor-${{ matrix.target }}
@@ -44,6 +50,7 @@ jobs:
 
   release:
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
