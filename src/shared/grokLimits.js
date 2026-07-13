@@ -25,6 +25,22 @@ const GROK_KEY_NAMES = ['GROK_BEARER_TOKEN'];
 const GROK_OIDC_PREFIX = 'https://auth.x.ai::';
 const GROK_LEGACY_SCOPE = 'https://accounts.x.ai/sign-in';
 
+// grok.com is unreachable by direct connection from some networks, and Node's
+// built-in fetch (undici) ignores both the Windows system proxy and proxy env
+// vars. Inside Electron, prefer the Chromium network stack (net.fetch): it
+// follows the OS proxy configuration, so a system-proxy tool (Clash etc.) can
+// route these calls by its own rules without TUN mode. Plain Node (CLI agent,
+// tests) keeps global fetch.
+function defaultGrokFetch() {
+  if (process.versions && process.versions.electron) {
+    try {
+      const { net } = require('electron');
+      if (net && typeof net.fetch === 'function') return net.fetch.bind(net);
+    } catch (_) { /* renderer/util contexts fall through to global fetch */ }
+  }
+  return fetch;
+}
+
 function resolveGrokHome(env = process.env) {
   if (typeof env.GROK_HOME === 'string' && env.GROK_HOME.trim()) {
     return path.resolve(env.GROK_HOME.trim());
@@ -482,7 +498,7 @@ async function fetchGrokWebGrpcBilling(credential, deps = {}) {
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
-    const fetchFn = deps.fetch || fetch;
+    const fetchFn = deps.fetch || defaultGrokFetch();
     const response = await fetchFn(GROK_WEB_BILLING_GRPC_URL, {
       method: 'POST',
       headers: {
@@ -521,7 +537,7 @@ async function fetchGrokLegacyJsonBilling(credential, deps = {}) {
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
-    const fetchFn = deps.fetch || fetch;
+    const fetchFn = deps.fetch || defaultGrokFetch();
     const response = await fetchFn(GROK_LEGACY_BILLING_URL, {
       headers: {
         Authorization: `Bearer ${credential.token}`,

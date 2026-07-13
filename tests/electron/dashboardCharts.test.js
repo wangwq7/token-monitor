@@ -25,9 +25,13 @@ test('usageCharts exports every symbol app.js destructures from it', () => {
 
 test('clientColors carries the known palette and a default', () => {
   assert.equal(clientColors.claude, '#cc7c5e');
-  assert.equal(clientColors.codex, '#49a3b0');
+  // Family-color vendors mirror MODEL_FAMILY_COLORS so a provider looks the
+  // same in the activity bars, limits rings, tools list, and Settings picker.
+  assert.equal(clientColors.codex, '#22a3c2');
+  assert.equal(clientColors.deepseek, '#4dbf7e');
+  assert.equal(clientColors.grok, '#a3aef5'); // black brand marks are unreadable on the dark surface
   assert.equal(clientColors.cline, '#323B43');
-  assert.equal(clientColors.volcengine, '#006EFF');
+  assert.equal(clientColors.volcengine, '#37a4ff');
   assert.equal(clientColors.qoder, '#2ADB5C');
   assert.equal(typeof clientColors.default, 'string');
 });
@@ -59,6 +63,20 @@ function luminanceOf(hex) {
   });
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
+
+test('applyModelFamilyOverrides recolors families, honors picker aliases, and restores defaults', () => {
+  const glmDefault = charts.modelDisplayColor('glm-5.2');
+  const kimiDefault = charts.modelDisplayColor('kimi-k3');
+  try {
+    charts.applyModelFamilyOverrides({ zai: '#2255aa', kimi: '#aa2255', bogus: '#123456', broken: 'nope' });
+    assert.notEqual(charts.modelDisplayColor('glm-5.2'), glmDefault); // zai family recolored
+    assert.notEqual(charts.modelDisplayColor('kimi-k3'), kimiDefault); // picker id "kimi" reaches the moonshot family
+  } finally {
+    charts.applyModelFamilyOverrides({});
+  }
+  assert.equal(charts.modelDisplayColor('glm-5.2'), glmDefault); // removal restores the family default
+  assert.equal(charts.modelDisplayColor('kimi-k3'), kimiDefault);
+});
 
 test('modelDisplayColor gives GLM an orange family and DeepSeek a green family', () => {
   const glm = charts.modelDisplayColor('glm-5.2');
@@ -114,7 +132,7 @@ test('barsChartSvg renders one rect per segment with colorFor fill and a per-bar
   });
   assert.match(svg, /^<svg /);
   assert.equal((svg.match(/class="bar-seg"/g) || []).length, 2); // one shape per stacked segment
-  assert.match(svg, /<path d="M[\d.,\sLQZ-]+" fill="#49a3b0" class="bar-seg">/); // top segment gets a rounded-top cap
+  assert.match(svg, /<path d="M[\d.,\sLQZ-]+" fill="#22a3c2" class="bar-seg">/); // top segment gets a rounded-top cap
   assert.equal((svg.match(/class="bar-hover"/g) || []).length, 1); // plus a transparent hover overlay
   assert.match(svg, /fill="#cc7c5e"/);
   assert.match(svg, /<title>total 15<\/title>/);

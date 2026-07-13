@@ -1,7 +1,7 @@
 'use strict';
 
 const clientLabels = { claude: 'Claude Code', codex: 'Codex', hermes: 'Hermes', gemini: 'Gemini', cursor: 'Cursor', opencode: 'OpenCode', openclaw: 'OpenClaw', antigravity: 'Antigravity', cline: 'Cline', kimi: 'Kimi', qwen: 'Qwen', grok: 'Grok Build', copilot: 'GitHub Copilot', pi: 'Pi', zed: 'Zed', kilocode: 'Kilo Code', micode: 'MiMo Code', zcode: 'ZCode', kiro: 'Kiro', codebuddy: 'CodeBuddy', workbuddy: 'WorkBuddy' };
-const { clientColors, fallbackModelColors, modelVendorFor, modelDisplayColor } = window.TokenMonitorUsageCharts;
+const { clientColors, fallbackModelColors, modelVendorFor, modelDisplayColor, applyModelFamilyOverrides } = window.TokenMonitorUsageCharts;
 const clientsWithIcon = new Set([
   'claude', 'codex', 'gemini', 'cursor', 'opencode', 'openclaw', 'hermes', 'antigravity', 'cline', 'kimi', 'qwen', 'grok', 'copilot', 'pi', 'zed', 'kilocode', 'micode', 'zcode', 'kiro', 'codebuddy', 'workbuddy',
   'xai', 'deepseek', 'meta', 'mistral', 'qwen', 'moonshot', 'zai', 'zaiteam', 'cohere', 'xiaomi', 'minimax', 'doubao', 'volcengine', 'qoder'
@@ -2845,7 +2845,10 @@ function homeLimitRows() {
     enabledProviderIds: Array.from(enabled),
     hiddenProviderIds: Array.from(hiddenHomeLimitProviderSet()),
     colors: clientColors,
-    limit: 3,
+    // Half-width cells make single-window accounts cheap, so the module can
+    // show every configured provider instead of silently dropping the 4th+
+    // account (grok appeared in the full Limits view but never on Home).
+    limit: 8,
     sort: hasConfiguredOrder ? 'configured' : 'remaining',
     accountName: (provider, index, providerEntries) => {
       const id = String(provider?.provider || '').trim().toLowerCase();
@@ -2981,9 +2984,14 @@ function renderHomeLimitModule() {
     body.append(empty);
     return module;
   }
+  // Density grid: dual-window accounts keep a full row (two meters side by
+  // side); single-window and balance-only accounts occupy half a row so two
+  // of them pair up instead of each wasting the other half.
+  const grid = document.createElement('div');
+  grid.className = 'home-limit-grid';
   for (const row of rows) {
     const item = document.createElement('div');
-    item.className = 'home-limit-account';
+    item.className = `home-limit-account ${row.windows.length >= 2 ? 'home-limit-account-wide' : 'home-limit-account-half'}`;
     const account = document.createElement('div');
     account.className = 'home-limit-account-head';
     const mark = document.createElement('span');
@@ -3015,8 +3023,9 @@ function renderHomeLimitModule() {
       windows.append(metric);
     }
     item.append(account, windows);
-    body.append(item);
+    grid.append(item);
   }
+  body.append(grid);
   return module;
 }
 
@@ -4007,6 +4016,9 @@ function applyThemeColors(overrides) {
 function applyVendorColorOverrides(overrides) {
   const merged = themePresetsApi.mergeVendorColors(BRAND_VENDOR_COLORS, overrides);
   for (const key of Object.keys(BRAND_VENDOR_COLORS)) clientColors[key] = merged[key];
+  // Keep the activity chart's model families on the same palette, so one
+  // override recolors a vendor everywhere instead of splitting the surfaces.
+  applyModelFamilyOverrides(overrides);
 }
 
 // Current resolved palette value for an interface colour key.

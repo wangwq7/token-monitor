@@ -1847,6 +1847,35 @@ body.floating-bubble-collapsed-right .floating-bubble-tab {
   min-width: 0;
   gap: 4px;
 }
+/* Density grid for limit accounts: providers exposing two windows (session +
+   weekly) keep a full row, single-window and balance-only providers take half
+   a row so two of them pair up. dense packing backfills a stray half slot. */
+.home-module-limits {
+  container-type: inline-size;
+}
+.home-limit-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-flow: row dense;
+  gap: 10px 14px;
+}
+.home-limit-account-wide {
+  grid-column: 1 / -1;
+}
+/* A half cell has ~40% of the row: drop the head indent so the meter keeps
+   its full size, and let very narrow widgets fall back to one column. */
+.home-limit-account-half .home-limit-windows {
+  margin-left: 0;
+}
+@container (max-width: 250px) {
+  .home-limit-account-half {
+    grid-column: 1 / -1;
+  }
+  .home-limit-account-half .home-limit-windows {
+    margin-left: 18px;
+  }
+}
 .home-limit-account-head {
   display: grid;
   min-width: 0;

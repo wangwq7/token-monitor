@@ -389,12 +389,19 @@
     return copy;
   }
 
+  // Tool/provider brand palette. Vendors that also appear in the activity
+  // chart's MODEL_FAMILY_COLORS use the SAME hex here, so a provider's color is
+  // identical across the activity bars, the limits rings, the tools list, and
+  // the Settings vendor picker (which reads this map as its defaults). Black
+  // brand marks are replaced by their family hue — a black ring/segment is
+  // unreadable on the dark surface. Tool-only ids without a model family
+  // (hermes, cline, qoder, ...) keep their own brand colors.
   const clientColors = {
-    claude: '#cc7c5e', codex: '#49a3b0', hermes: '#d4af37', gemini: '#4285f4',
-    antigravity: '#4285f4', cline: '#323B43', kimi: '#16191e', grok: '#000000', copilot: '#000000', deepseek: '#4d6bfe', cursor: '#000000', opencode: '#000000',
-    openclaw: '#ff4d4d', xai: '#000000', meta: '#1d65c1', mistral: '#fa520f', qwen: '#615ced',
-    pi: '#000', zed: '#4173e7', kilocode: '#F8F676', micode: '#000000', zcode: '#000000', kiro: '#9046FF', codebuddy: '#6C4DFF', workbuddy: '#0DC8A5',
-    moonshot: '#16191e', zai: '#000000', zaiteam: '#000000', cohere: '#39594d', xiaomi: '#ff6700', minimax: '#f23f5d', doubao: '#1E37FC', volcengine: '#006EFF', qoder: '#2ADB5C',
+    claude: '#cc7c5e', codex: '#22a3c2', hermes: '#d4af37', gemini: '#5b8def',
+    antigravity: '#5b8def', cline: '#323B43', kimi: '#e0699e', grok: '#a3aef5', copilot: '#000000', deepseek: '#4dbf7e', cursor: '#9d8cff', opencode: '#52c4b0',
+    openclaw: '#ff4d4d', xai: '#a3aef5', meta: '#4f9cf7', mistral: '#fb923c', qwen: '#8b7bf5',
+    pi: '#000', zed: '#4173e7', kilocode: '#F8F676', micode: '#ee6352', zcode: '#000000', kiro: '#9046FF', codebuddy: '#6C4DFF', workbuddy: '#0DC8A5',
+    moonshot: '#e0699e', zai: '#f2a33c', zaiteam: '#f2a33c', cohere: '#3fae8e', xiaomi: '#ee6352', minimax: '#f23f5d', doubao: '#37a4ff', volcengine: '#37a4ff', qoder: '#2ADB5C',
     default: '#6ab4f0'
   };
   const fallbackModelColors = ['#6ab4f0', '#cc7c5e', '#a57df0', '#49a3b0', '#f0d66a', '#f06a7b'];
@@ -447,6 +454,26 @@
   };
   const MODEL_FALLBACK_COLORS = ['#6ab4f0', '#a57df0', '#f0d66a', '#f06a7b', '#52c4b0', '#e0699e'];
   const MODEL_SHADE_OFFSETS = [-0.09, -0.045, 0, 0.05, 0.1];
+  const DEFAULT_MODEL_FAMILY_COLORS = { ...MODEL_FAMILY_COLORS };
+  // Settings vendor-picker ids that map onto a model family under another name.
+  const MODEL_FAMILY_ALIASES = {
+    kimi: 'moonshot', grok: 'xai', zaiteam: 'zai', micode: 'xiaomi', antigravity: 'gemini'
+  };
+
+  // Single source of truth for vendor colors: when the user overrides a vendor
+  // in Settings, the same hex must recolor the activity chart's model families,
+  // not just the tool/limits surfaces — otherwise the two drift apart again.
+  // Passing a missing/removed key restores the family default.
+  function applyModelFamilyOverrides(overrides) {
+    const clean = overrides && typeof overrides === 'object' ? overrides : {};
+    for (const key of Object.keys(MODEL_FAMILY_COLORS)) MODEL_FAMILY_COLORS[key] = DEFAULT_MODEL_FAMILY_COLORS[key];
+    for (const [vendor, hex] of Object.entries(clean)) {
+      if (!/^#[0-9a-fA-F]{6}$/.test(String(hex || ''))) continue;
+      const familyKey = MODEL_FAMILY_COLORS[vendor] !== undefined ? vendor : MODEL_FAMILY_ALIASES[vendor];
+      if (familyKey) MODEL_FAMILY_COLORS[familyKey] = hex;
+    }
+    modelDisplayColorCache.clear();
+  }
 
   function hexToHslParts(hex) {
     const match = /^#([0-9a-fA-F]{6})$/.exec(String(hex || ''));
@@ -769,7 +796,7 @@
     weekStartKey, dailyBarsChart, horizontalBarsChart, monthActivityGrid, candleChart, contribHeatmap, rollingYearHeatmap, statsCards, sparklinePreview,
     areaLineChart, areaLineSvg,
     selectPreviewSeries, patchTodayBar, sparklineSvg,
-    clientColors, fallbackModelColors, modelVendorFor, modelDisplayColor, clampDaily,
+    clientColors, fallbackModelColors, modelVendorFor, modelDisplayColor, applyModelFamilyOverrides, clampDaily,
     barsChartSvg, horizontalBarsChartSvg, candleChartSvg, heatmapSvg, statsCardsHtml, statCardColumnWidths
   };
 });

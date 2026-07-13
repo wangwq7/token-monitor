@@ -425,6 +425,26 @@ test('renderHomeTrendsModule uses horizontal model-stacked day bars and a three-
   assert.match(match[1], /month:\s*currentMonth, rows:\s*3/);
 });
 
+test('home limits use a density grid: dual-window rows full width, singles paired two-up', () => {
+  const rendererSource = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/app.js'), 'utf8');
+  const match = rendererSource.match(/function renderHomeLimitModule\(\) \{([\s\S]*?)\n\}\n\nfunction renderHomeModelModule/);
+  assert.ok(match, 'renderHomeLimitModule exists');
+  assert.match(match[1], /home-limit-grid/);
+  assert.match(match[1], /row\.windows\.length >= 2 \? 'home-limit-account-wide' : 'home-limit-account-half'/);
+  // Half-width singles make room to show every provider (grok was silently
+  // dropped by the old 3-account cap while its detection worked fine).
+  assert.match(rendererSource, /limit:\s*8/);
+  const css = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/styles.css'), 'utf8');
+  assert.match(css, /\.home-module-limits\s*\{[^}]*container-type:\s*inline-size/);
+  assert.match(css, /\.home-limit-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)[^}]*grid-auto-flow:\s*row dense/);
+  assert.match(css, /\.home-limit-account-wide\s*\{[^}]*grid-column:\s*1 \/ -1/);
+  assert.match(css, /@container \(max-width:\s*250px\)[\s\S]*?\.home-limit-account-half\s*\{[^}]*grid-column:\s*1 \/ -1/);
+  // Settings overrides flow into the activity families too, so no surface drifts.
+  assert.match(rendererSource, /applyModelFamilyOverrides\(overrides\)/);
+  const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/dashboard.js'), 'utf8');
+  assert.match(dashboardSource, /charts\.applyModelFamilyOverrides\(overrides\)/);
+});
+
 test('hovering a stacked run names the model; empty track still reports the day total', () => {
   const rendererSource = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/app.js'), 'utf8');
   const hover = rendererSource.match(/function setupHomeActivityBarHover\(root\) \{([\s\S]*?)\n\}/);

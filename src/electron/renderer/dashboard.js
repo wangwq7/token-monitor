@@ -61,6 +61,9 @@ function applyThemeColors(overrides) {
 function applyVendorColorOverrides(overrides) {
   const merged = themePresetsApi.mergeVendorColors(BRAND_VENDOR_COLORS, overrides);
   for (const key of Object.keys(BRAND_VENDOR_COLORS)) charts.clientColors[key] = merged[key];
+  // Same palette rule as the widget: a vendor override also recolors the
+  // model families this window stacks by.
+  charts.applyModelFamilyOverrides(overrides);
 }
 
 function formatCompact(value) {
