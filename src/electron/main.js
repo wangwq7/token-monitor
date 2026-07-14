@@ -1261,7 +1261,7 @@ function applyWindowSettings() {
     mainWindow.setIgnoreMouseEvents(behavior.mousePassthrough);
   }
   if (typeof mainWindow.setFocusable === 'function') mainWindow.setFocusable(behavior.focusable);
-  if (typeof mainWindow.setSkipTaskbar === 'function') mainWindow.setSkipTaskbar(Boolean(settings?.trayMode));
+  if (typeof mainWindow.setSkipTaskbar === 'function') mainWindow.setSkipTaskbar(behavior.skipTaskbar || Boolean(settings?.trayMode));
   if (!behavior.focusable && typeof mainWindow.blur === 'function') mainWindow.blur();
 }
 
@@ -2122,7 +2122,11 @@ function enterTrayMode() {
 function exitTrayMode() {
   applyMacActivationPolicy({ mainWindowVisible: true });
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (typeof mainWindow.setSkipTaskbar === 'function') mainWindow.setSkipTaskbar(false);
+    // Leaving tray mode doesn't always mean "show in taskbar" — a desktop-pinned
+    // widget still wants to stay out of it. Defer to the behavior profile.
+    if (typeof mainWindow.setSkipTaskbar === 'function') {
+      mainWindow.setSkipTaskbar(describeWindowBehavior(settings).skipTaskbar);
+    }
     if (typeof mainWindow.setVisibleOnAllWorkspaces === 'function') {
       mainWindow.setVisibleOnAllWorkspaces(false);
     }
@@ -2540,7 +2544,7 @@ function createWindow(boundsOverride, options = {}) {
     show: false,
     backgroundColor,
     icon: APP_ICON_PATH,
-    skipTaskbar: collapsedFloatingBubble || Boolean(settings?.trayMode),
+    skipTaskbar: collapsedFloatingBubble || Boolean(settings?.trayMode) || describeWindowBehavior(settings).skipTaskbar,
     ...(collapsedFloatingBubble ? { fullscreenable: false, maximizable: false, minimizable: false } : {}),
     ...floatingBubbleWindowChrome(process.platform, collapsedFloatingBubble),
     ...(process.platform === 'darwin' && glass ? { vibrancy: 'hud', visualEffectState: 'active' } : {}),

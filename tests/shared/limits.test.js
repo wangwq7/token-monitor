@@ -143,6 +143,43 @@ test('mergeCodexTransientWindows keeps recent Codex windows when the same accoun
   assert.equal(merged.providers[0].updatedAt, '2026-06-14T10:00:00.000Z');
 });
 
+test('mergeCodexTransientWindows keeps windows through a transient failed read with an honest status', () => {
+  const previous = {
+    updatedAt: '2026-06-14T10:00:00.000Z',
+    providers: [codexProvider('sha256:codex-a', 'a@example.com', 50, '2026-06-14T10:00:00.000Z')]
+  };
+  const current = {
+    updatedAt: '2026-06-14T10:05:00.000Z',
+    providers: [
+      {
+        ...codexProvider('sha256:codex-a', 'a@example.com', 0, '2026-06-14T10:05:00.000Z'),
+        status: 'unavailable',
+        windows: []
+      }
+    ]
+  };
+
+  const merged = mergeCodexTransientWindows(previous, current, Date.parse('2026-06-14T10:05:00.000Z'));
+
+  assert.equal(merged.providers[0].windows.length, 1); // last-good windows survive the blip
+  assert.equal(merged.providers[0].windows[0].remainingPercent, 50);
+  assert.equal(merged.providers[0].status, 'unavailable'); // status stays honest
+
+  // A real auth problem must surface, never be masked by old windows.
+  const unauthorized = {
+    updatedAt: '2026-06-14T10:05:00.000Z',
+    providers: [
+      {
+        ...codexProvider('sha256:codex-a', 'a@example.com', 0, '2026-06-14T10:05:00.000Z'),
+        status: 'unauthorized',
+        windows: []
+      }
+    ]
+  };
+  const kept = mergeCodexTransientWindows(previous, unauthorized, Date.parse('2026-06-14T10:05:00.000Z'));
+  assert.equal(kept.providers[0].windows.length, 0);
+});
+
 test('mergeCodexTransientWindows stops keeping old Codex windows after retention expires', () => {
   const previous = {
     updatedAt: '2026-06-14T10:00:00.000Z',

@@ -187,7 +187,7 @@ test('Home activity heatmap contains horizontal overscroll and prevents native p
 
 test('Home model rows align icon spacing with the limit account rows', () => {
   const css = readRendererFile('styles.css');
-  assert.match(cssRule(css, '.home-limit-account-head'), /gap:\s*8px/);
+  assert.match(cssRule(css, '.home-limit-account-head'), /gap:\s*7px/);
   assert.match(cssRule(css, '.home-model-row'), /column-gap:\s*8px/);
 });
 
@@ -211,18 +211,19 @@ test('Home module jump icons align optically with their titles', () => {
 
 test('Home limit values use compact typography', () => {
   const css = readRendererFile('styles.css');
-  // Quota windows: the percent sits in the ring center (.ring-num), tabular-nums.
+  // Every window (quota and balance) reads its value in the ring center.
   assert.match(cssRule(css, '.home-limit-ring-value .ring-num'), /font-size:\s*11px/);
   assert.match(cssRule(css, '.home-limit-ring-value'), /font-variant-numeric:\s*tabular-nums/);
-  // Balance windows: the money amount sits beside the bar (.home-limit-balance-amount).
-  assert.match(cssRule(css, '.home-limit-balance-amount'), /font-size:\s*12px/);
-  assert.match(cssRule(css, '.home-limit-balance-amount'), /font-variant-numeric:\s*tabular-nums/);
+  // Balance rings center the money amount in compact type that fits the 40px ring.
+  assert.match(cssRule(css, '.home-limit-ring-value .ring-amount'), /font-size:\s*9px/);
 });
 
-test('Home billing-only limit rows span the full summary width', () => {
+test('Home limit accounts share one uniform card cell', () => {
   const css = readRendererFile('styles.css');
-  assert.match(cssRule(css, '.home-limit-window:only-child'), /grid-column:\s*1 \/ -1/);
-  assert.match(cssRule(css, '.home-limit-window:only-child'), /max-width:\s*none/);
+  // No stray horizontal balance bar; balances use the ring like everyone else.
+  assert.doesNotMatch(css, /\.home-limit-balance-bar/);
+  assert.doesNotMatch(css, /\.home-limit-window\.is-balance/);
+  assert.match(cssRule(css, '.home-limit-account'), /gap:\s*7px/);
 });
 
 test('Home limit provider settings stay compact and list only enabled providers', () => {

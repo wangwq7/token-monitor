@@ -478,16 +478,15 @@ test('Home uses explicit billing labels so Copilot Premium and Chat stay distinc
   const styles = readRendererFile('styles.css');
   const homeLabel = functionBody(app, 'homeLimitWindowLabel', 'renderHomeLimitModule');
   const homeModule = functionBody(app, 'renderHomeLimitModule', 'renderHomeModelModule');
-  const ringBuilder = functionBody(app, 'homeLimitRing', 'homeLimitBalanceBar');
-  const balanceBar = functionBody(app, 'homeLimitBalanceBar', 'homeLimitMeter');
+  const ringBuilder = functionBody(app, 'homeLimitRing', 'homeLimitBalanceRing');
+  const balanceRing = functionBody(app, 'homeLimitBalanceRing', 'homeLimitMeter');
 
   assert.match(homeLabel, /const label = String\(window\?\.label \|\| ''\)\.trim\(\);/);
   assert.match(homeLabel, /if \(label && label !== window\?\.kind\) return label;/);
   assert.match(homeLabel, /billing: 'home\.limit\.billing'/);
   assert.match(homeLabel, /if \(window\?\.kind === 'balance'\) return 'Balance';/);
-  // Home dispatches by window kind: quota windows render a colored ring, balance
-  // windows render a horizontal bar. Both route through homeLimitMeter.
-  assert.match(homeModule, /if \(window\?\.kind === 'balance'\) metric\.classList\.add\('is-balance'\);/);
+  // Home renders every window through homeLimitMeter; balance windows share the
+  // ring geometry (amount in the center) so all meters keep one rhythm.
   assert.match(homeModule, /metric\.append\(homeLimitMeter\(window, row\.color\)\);/);
   assert.match(ringBuilder, /const fillPercent = limitFillPercent\(remaining, window\?\.usedPercent, showUsed\);/);
   // Ring center shows the percent number + left/used suffix.
@@ -495,13 +494,13 @@ test('Home uses explicit billing labels so Copilot Premium and Chat stay distinc
   assert.match(ringBuilder, /sub\.textContent = limitModeSuffix\(showUsed\);/);
   // Ring arc color blends toward warning hues as remaining drops (status gradient).
   assert.match(ringBuilder, /const arcColor = limitStatusColor\(remaining, color\);/);
-  // Balance bar shows the money amount beside a colored track sized to remaining.
-  assert.match(balanceBar, /amount\.textContent = formatMoney\(window\?\.amount, window\?\.currency\);/);
-  assert.match(balanceBar, /const fillColor = limitStatusColor\(safe, color\);/);
-  assert.match(balanceBar, /fill\.style\.width = `\$\{safe\}%`;/);
+  // Balance ring keeps the same arc/status gradient and centers the money amount.
+  assert.match(balanceRing, /amount\.textContent = formatMoney\(window\?\.amount, window\?\.currency\);/);
+  assert.match(balanceRing, /const arcColor = limitStatusColor\(safe, color\);/);
+  assert.match(balanceRing, /home-limit-ring home-limit-ring-balance/);
   assert.match(styles, /\.home-limit-ring\s*\{[^}]*position: relative;/s);
-  assert.match(styles, /\.home-limit-window\.is-balance\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
-  assert.match(styles, /\.home-limit-balance-track\s*\{[^}]*height:\s*6px;/s);
+  assert.match(styles, /\.home-limit-ring-value \.ring-amount\s*\{[^}]*font-size:\s*9px;/s);
+  assert.doesNotMatch(styles, /home-limit-balance-track|home-limit-window\.is-balance/);
   assert.doesNotMatch(i18n, /home\.limit\.(balance|leftPercent|leftAmount)/);
 });
 

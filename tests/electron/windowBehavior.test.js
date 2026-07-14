@@ -26,6 +26,7 @@ test('maps window behavior modes to window flags', () => {
     mousePassthrough: false,
     showInactive: false,
     requiresTrayControl: false,
+    skipTaskbar: false,
     cssClass: ''
   });
   assert.deepEqual(describeWindowBehavior({ windowBehavior: 'normal' }), {
@@ -37,8 +38,12 @@ test('maps window behavior modes to window flags', () => {
     mousePassthrough: false,
     showInactive: false,
     requiresTrayControl: false,
+    skipTaskbar: false,
     cssClass: ''
   });
+  // Desktop-pinned is a wallpaper widget, not an app window: it stays out of
+  // the taskbar (tray access only). macOS Dock is governed separately by
+  // LSUIElement/activation policy.
   assert.deepEqual(describeWindowBehavior({ windowBehavior: 'desktop' }), {
     mode: 'desktop',
     alwaysOnTop: false,
@@ -48,6 +53,7 @@ test('maps window behavior modes to window flags', () => {
     mousePassthrough: false,
     showInactive: false,
     requiresTrayControl: false,
+    skipTaskbar: true,
     cssClass: 'desktop-mode'
   });
 });

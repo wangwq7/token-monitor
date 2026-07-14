@@ -425,20 +425,30 @@ test('renderHomeTrendsModule uses horizontal model-stacked day bars and a three-
   assert.match(match[1], /month:\s*currentMonth, rows:\s*3/);
 });
 
-test('home limits use a density grid: dual-window rows full width, singles paired two-up', () => {
+test('home limits use a uniform card grid: every account cell shares one ring rhythm and height', () => {
   const rendererSource = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/app.js'), 'utf8');
   const match = rendererSource.match(/function renderHomeLimitModule\(\) \{([\s\S]*?)\n\}\n\nfunction renderHomeModelModule/);
   assert.ok(match, 'renderHomeLimitModule exists');
   assert.match(match[1], /home-limit-grid/);
-  assert.match(match[1], /row\.windows\.length >= 2 \? 'home-limit-account-wide' : 'home-limit-account-half'/);
-  // Half-width singles make room to show every provider (grok was silently
-  // dropped by the old 3-account cap while its detection worked fine).
+  // Dual-window accounts span both columns; everything else is a uniform cell.
+  assert.match(match[1], /row\.windows\.length >= 2\) item\.classList\.add\('home-limit-account-dual'\)/);
+  // Balances carry their amount in the ring center; the meta below stays the
+  // two-line label+blank rhythm so labels line up across the grid.
+  assert.match(match[1], /window\?\.kind === 'balance'/);
+  assert.match(rendererSource, /amount\.textContent = formatMoney\(window\?\.amount, window\?\.currency\)/);
+  // Show every provider (grok was silently dropped by the old 3-account cap).
   assert.match(rendererSource, /limit:\s*8/);
+  // Balance windows render as a ring, not a stray horizontal bar.
+  assert.match(rendererSource, /function homeLimitBalanceRing\(/);
+  assert.doesNotMatch(rendererSource, /function homeLimitBalanceBar\(/);
   const css = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/styles.css'), 'utf8');
   assert.match(css, /\.home-module-limits\s*\{[^}]*container-type:\s*inline-size/);
-  assert.match(css, /\.home-limit-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)[^}]*grid-auto-flow:\s*row dense/);
-  assert.match(css, /\.home-limit-account-wide\s*\{[^}]*grid-column:\s*1 \/ -1/);
-  assert.match(css, /@container \(max-width:\s*250px\)[\s\S]*?\.home-limit-account-half\s*\{[^}]*grid-column:\s*1 \/ -1/);
+  assert.match(css, /\.home-limit-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\.home-limit-account-dual\s*\{[^}]*grid-column:\s*1 \/ -1/);
+  // Fixed two-row meta keeps labels on one baseline whether or not a reset exists.
+  assert.match(css, /\.home-limit-window-meta\s*\{[^}]*grid-template-rows:\s*auto auto/);
+  // The old balance-bar styling is gone with its DOM.
+  assert.doesNotMatch(css, /\.home-limit-balance-bar/);
   // Settings overrides flow into the activity families too, so no surface drifts.
   assert.match(rendererSource, /applyModelFamilyOverrides\(overrides\)/);
   const dashboardSource = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/dashboard.js'), 'utf8');

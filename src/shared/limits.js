@@ -291,6 +291,11 @@ function hasProviderWindows(provider) {
   return Array.isArray(provider?.windows) && provider.windows.length > 0;
 }
 
+// Statuses that describe a moment, not the account: the quota still exists,
+// this read just failed to see it. A configured account in one of these states
+// keeps its last-good windows (below) so the Home module doesn't blink.
+const TRANSIENT_PROVIDER_STATUSES = new Set(['ok', 'unavailable', 'error', 'rateLimited', 'sourceRateLimited']);
+
 function mergeCodexTransientWindows(previousInput, currentInput, nowMs = Date.now(), retentionMs = CODEX_TRANSIENT_WINDOW_RETENTION_MS) {
   const current = normalizeLimitsSummary(currentInput);
   if (!previousInput || !Number.isFinite(Number(retentionMs)) || Number(retentionMs) <= 0) return current;
@@ -311,7 +316,11 @@ function mergeCodexTransientWindows(previousInput, currentInput, nowMs = Date.no
   return {
     ...current,
     providers: current.providers.map((provider) => {
-      if (provider.provider !== 'codex' || provider.status !== 'ok' || hasProviderWindows(provider)) return provider;
+      // A transient empty read (empty 'ok' payload, a rate-limited poll, or a
+      // one-off network error) must not blank a recently-good account — reuse
+      // its last known windows while keeping the current status honest.
+      if (provider.provider !== 'codex' || hasProviderWindows(provider)) return provider;
+      if (!TRANSIENT_PROVIDER_STATUSES.has(provider.status)) return provider;
       const previousProvider = codexProviderIdentityKeys(provider)
         .map((key) => previousByIdentity.get(key))
         .find(Boolean);

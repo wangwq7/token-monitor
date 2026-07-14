@@ -12,6 +12,7 @@ const WINDOW_BEHAVIOR_PROFILES = {
     mousePassthrough: false,
     showInactive: false,
     requiresTrayControl: false,
+    skipTaskbar: false,
     cssClass: ''
   },
   normal: {
@@ -23,6 +24,7 @@ const WINDOW_BEHAVIOR_PROFILES = {
     mousePassthrough: false,
     showInactive: false,
     requiresTrayControl: false,
+    skipTaskbar: false,
     cssClass: ''
   },
   desktop: {
@@ -34,6 +36,11 @@ const WINDOW_BEHAVIOR_PROFILES = {
     mousePassthrough: false,
     showInactive: false,
     requiresTrayControl: false,
+    // Desktop-pinned is a widget sitting on the wallpaper, not an app window —
+    // keep it out of the taskbar/Dock. Windows honors setSkipTaskbar; on macOS
+    // the Dock is governed by LSUIElement/activation policy, where this is a
+    // harmless no-op.
+    skipTaskbar: true,
     cssClass: 'desktop-mode'
   }
 };

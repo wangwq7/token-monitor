@@ -2940,37 +2940,62 @@ function homeLimitRing(window, color) {
   return wrap;
 }
 
-// Home limit bar for balance windows (DeepSeek etc.): a horizontal track with a
-// colored fill sized to remainingPercent, the money amount shown beside it. The
-// fill uses the same status gradient as the ring arc, so a near-drained balance
-// turns red. Balances don't have a "used" mode, so the fill always reflects the
-// remaining share (amount / (amount + monthSpend)).
-function homeLimitBalanceBar(window, color) {
+// Home limit ring for a balance window (DeepSeek etc.): the same ring geometry
+// as a quota meter so balances share one visual rhythm instead of a stray
+// horizontal bar. The arc reflects the remaining share (amount / (amount +
+// monthSpend)) with the same status gradient; the center shows the money amount.
+function homeLimitBalanceRing(window, color) {
   const remaining = Math.max(0, Math.min(100, Number(window?.remainingPercent)));
   const safe = Number.isFinite(remaining) ? remaining : 100;
-  const fillColor = limitStatusColor(safe, color);
-  const bar = document.createElement('div');
-  bar.className = 'home-limit-balance-bar';
+  const { r, cx, cy, stroke, circumference } = HOME_LIMIT_RING;
+  const dashoffset = circumference * (1 - safe / 100);
+  const arcColor = limitStatusColor(safe, color);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'home-limit-ring home-limit-ring-balance';
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('viewBox', '0 0 44 44');
+  svg.setAttribute('aria-hidden', 'true');
+  const track = document.createElementNS(svgNS, 'circle');
+  track.setAttribute('class', 'home-limit-ring-track');
+  track.setAttribute('cx', String(cx));
+  track.setAttribute('cy', String(cy));
+  track.setAttribute('r', String(r));
+  track.setAttribute('fill', 'none');
+  track.setAttribute('stroke-width', String(stroke));
+  const arc = document.createElementNS(svgNS, 'circle');
+  arc.setAttribute('class', 'home-limit-ring-arc');
+  arc.setAttribute('cx', String(cx));
+  arc.setAttribute('cy', String(cy));
+  arc.setAttribute('r', String(r));
+  arc.setAttribute('fill', 'none');
+  arc.setAttribute('stroke-width', String(stroke));
+  arc.setAttribute('stroke-linecap', 'round');
+  arc.setAttribute('stroke-dasharray', String(circumference));
+  arc.setAttribute('stroke-dashoffset', String(dashoffset));
+  arc.setAttribute('transform', `rotate(-90 ${cx} ${cy})`);
+  arc.style.stroke = arcColor;
+  svg.append(track, arc);
+  wrap.append(svg);
+
+  const value = document.createElement('div');
+  value.className = 'home-limit-ring-value';
   const amount = document.createElement('span');
-  amount.className = 'home-limit-balance-amount';
+  amount.className = 'ring-amount';
   amount.textContent = formatMoney(window?.amount, window?.currency);
-  const track = document.createElement('div');
-  track.className = 'home-limit-balance-track';
-  const fill = document.createElement('div');
-  fill.className = 'home-limit-balance-fill';
-  fill.style.width = `${safe}%`;
-  fill.style.background = fillColor;
-  track.append(fill);
-  bar.append(amount, track);
+  value.append(amount);
+  wrap.append(value);
+
   const label = homeLimitWindowLabel(window);
-  bar.setAttribute('role', 'img');
-  bar.setAttribute('aria-label', `${label}, ${formatMoney(window?.amount, window?.currency)}`);
-  return bar;
+  wrap.setAttribute('role', 'img');
+  wrap.setAttribute('aria-label', `${label}, ${formatMoney(window?.amount, window?.currency)}`);
+  return wrap;
 }
 
 function homeLimitMeter(window, color) {
   return window?.kind === 'balance'
-    ? homeLimitBalanceBar(window, color)
+    ? homeLimitBalanceRing(window, color)
     : homeLimitRing(window, color);
 }
 
@@ -2984,14 +3009,17 @@ function renderHomeLimitModule() {
     body.append(empty);
     return module;
   }
-  // Density grid: dual-window accounts keep a full row (two meters side by
-  // side); single-window and balance-only accounts occupy half a row so two
-  // of them pair up instead of each wasting the other half.
+  // Uniform 2-column card grid: every account is one card with an identical
+  // structure \u2014 provider head, then one row of ring meters. Single-window,
+  // dual-window and balance accounts all share the same ring rhythm and the
+  // same card height, so nothing looks ragged. A dual-window account still
+  // occupies one grid cell (its two rings sit side by side inside the card).
   const grid = document.createElement('div');
   grid.className = 'home-limit-grid';
   for (const row of rows) {
     const item = document.createElement('div');
-    item.className = `home-limit-account ${row.windows.length >= 2 ? 'home-limit-account-wide' : 'home-limit-account-half'}`;
+    item.className = 'home-limit-account';
+    if (row.windows.length >= 2) item.classList.add('home-limit-account-dual');
     const account = document.createElement('div');
     account.className = 'home-limit-account-head';
     const mark = document.createElement('span');
@@ -3005,7 +3033,6 @@ function renderHomeLimitModule() {
     for (const window of row.windows) {
       const metric = document.createElement('div');
       metric.className = 'home-limit-window';
-      if (window?.kind === 'balance') metric.classList.add('is-balance');
       metric.append(homeLimitMeter(window, row.color));
       const meta = document.createElement('div');
       meta.className = 'home-limit-window-meta';
@@ -3015,9 +3042,14 @@ function renderHomeLimitModule() {
       const resetAt = formatReset(window.resetsAt);
       const reset = document.createElement('span');
       reset.className = 'home-limit-reset';
-      reset.textContent = resetAt || (window.resetDescription
-        ? t('home.reset', { value: window.resetDescription })
-        : '\u00a0');
+      // Always render the second line (blank when absent) so every meta block is
+      // the same height and labels across the grid share one baseline. Balances
+      // carry their amount in the ring center, so the meta is just the label.
+      reset.textContent = window?.kind === 'balance'
+        ? '\u00a0'
+        : (resetAt || (window.resetDescription
+          ? t('home.reset', { value: window.resetDescription })
+          : '\u00a0'));
       meta.append(label, reset);
       metric.append(meta);
       windows.append(metric);
