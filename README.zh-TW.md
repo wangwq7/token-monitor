@@ -196,7 +196,7 @@ npm run pack       # 未封裝的 app 目錄（無安裝檔），方便本機快
 - **追蹤的工具**——選擇要收集的 AI 工具，也可以獨立隱藏、置頂或拖曳排序主列表中的工具。
 - **AI 工具額度**——選擇 Claude Code、Codex、Cursor、Antigravity、OpenCode、DeepSeek、Grok、Minimax、GitHub Copilot、Kiro、GLM、Volcengine 與 Qoder 的額度偵測與更新頻率。
 - **趨勢**——選擇每日使用歷史的掃描間隔，或直接關閉；開啟使用儀表板可看到活躍熱力圖、連續天數，以及依工具／依模型堆疊的柱狀圖與 K 線圖。
-- **視窗行為**——選擇浮在其他 app 上方、一般視窗，或固定在桌面。
+- **視窗行為**——選擇置頂、普通，或懸浮（失焦即收進通知區）；三種模式皆可拖曳、縮放，且不顯示於工作列。
 - **托盤模式**——切換為 macOS 選單列或 Windows 系統匣的彈出視窗，並選擇圖示旁顯示的內容：成本、今日 token 數、累計 token 數、成本＋token、最接近用完的 Claude／Codex／Cursor／Antigravity／OpenCode／Grok／Minimax／GitHub Copilot／Kiro／GLM／Volcengine／Qoder 剩餘額度百分比，或只顯示圖示。
 - **懸浮小窗**——將小工具收成可拖曳的小窗，可用點擊或懸停預覽展開，並可選擇顯示圖示、token、費用或 AI 工具額度條。
 - **快捷鍵**——錄製全域快捷鍵，用來顯示或隱藏視窗。

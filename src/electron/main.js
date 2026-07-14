@@ -2576,6 +2576,7 @@ function createWindow(boundsOverride, options = {}) {
   win.on('blur', () => {
     keepNativeBlurActive();
     if (settings?.trayMode && !suppressNextBlurHide && !quitRequested) hidePopover();
+    else if (!quitRequested && describeWindowBehavior(settings).hideOnBlur && tray) hidePopover();
     else if (!quitRequested) scheduleFloatingBubbleAutoCollapse();
   });
   win.on('resized', persistBoundsSoon);

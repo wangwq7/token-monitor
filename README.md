@@ -203,7 +203,7 @@ Click the `⚙` button in the widget header to open the Settings panel.
 - **Appearance** — switch the interface theme between presets (Default, Obsidian, and a Porcelain light mode) or your own custom colours (accent, background, text, muted), set per-tool vendor colours, system glass, live dot, tool icons, Discord Rich Presence, glass opacity, and glass blur.
 - **Advanced** — opens the underlying `settings.json` for less-common options like `allTimeSince`.
 
-The pin button in the widget header toggles "always on top".
+The pin button in the widget header cycles the window behavior: Always on top, Normal, or Float to tray (hides to the notification area on blur). All three are draggable and resizable and skip the taskbar.
 
 ### Headless agent and hub (`.env`)
 

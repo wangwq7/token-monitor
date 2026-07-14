@@ -26,7 +26,9 @@ test('maps window behavior modes to window flags', () => {
     mousePassthrough: false,
     showInactive: false,
     requiresTrayControl: false,
-    skipTaskbar: false,
+    // The widget is a tray-style app in every mode: never on the taskbar.
+    skipTaskbar: true,
+    hideOnBlur: false,
     cssClass: ''
   });
   assert.deepEqual(describeWindowBehavior({ windowBehavior: 'normal' }), {
@@ -38,22 +40,24 @@ test('maps window behavior modes to window flags', () => {
     mousePassthrough: false,
     showInactive: false,
     requiresTrayControl: false,
-    skipTaskbar: false,
+    skipTaskbar: true,
+    hideOnBlur: false,
     cssClass: ''
   });
-  // Desktop-pinned is a wallpaper widget, not an app window: it stays out of
-  // the taskbar (tray access only). macOS Dock is governed separately by
-  // LSUIElement/activation policy.
+  // Float-to-tray: a normal, draggable/resizable window that hides to the
+  // notification area on blur. Tray access only; never on the taskbar.
+  // macOS Dock is governed separately by LSUIElement/activation policy.
   assert.deepEqual(describeWindowBehavior({ windowBehavior: 'desktop' }), {
     mode: 'desktop',
     alwaysOnTop: false,
-    draggable: false,
-    resizable: false,
+    draggable: true,
+    resizable: true,
     focusable: true,
     mousePassthrough: false,
     showInactive: false,
     requiresTrayControl: false,
     skipTaskbar: true,
+    hideOnBlur: true,
     cssClass: 'desktop-mode'
   });
 });

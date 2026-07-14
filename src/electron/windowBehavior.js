@@ -12,7 +12,10 @@ const WINDOW_BEHAVIOR_PROFILES = {
     mousePassthrough: false,
     showInactive: false,
     requiresTrayControl: false,
-    skipTaskbar: false,
+    // The widget is a tray-style app: it lives in the notification area and
+    // never occupies a taskbar slot, in any mode.
+    skipTaskbar: true,
+    hideOnBlur: false,
     cssClass: ''
   },
   normal: {
@@ -24,23 +27,23 @@ const WINDOW_BEHAVIOR_PROFILES = {
     mousePassthrough: false,
     showInactive: false,
     requiresTrayControl: false,
-    skipTaskbar: false,
+    skipTaskbar: true,
+    hideOnBlur: false,
     cssClass: ''
   },
   desktop: {
     mode: 'desktop',
     alwaysOnTop: false,
-    draggable: false,
-    resizable: false,
+    draggable: true,
+    resizable: true,
     focusable: true,
     mousePassthrough: false,
     showInactive: false,
     requiresTrayControl: false,
-    // Desktop-pinned is a widget sitting on the wallpaper, not an app window —
-    // keep it out of the taskbar/Dock. Windows honors setSkipTaskbar; on macOS
-    // the Dock is governed by LSUIElement/activation policy, where this is a
-    // harmless no-op.
+    // A floating window that tucks away: clicking elsewhere blurs it and it
+    // hides to the tray until summoned again. Still draggable/resizable.
     skipTaskbar: true,
+    hideOnBlur: true,
     cssClass: 'desktop-mode'
   }
 };
