@@ -87,6 +87,7 @@ const preferenceDragSortApi = window.TokenMonitorPreferenceDragSort;
 const homeOverviewApi = window.TokenMonitorHomeOverview;
 const homeModulePreferencesApi = window.TokenMonitorHomeModulePreferences;
 const { limitFillPercent, limitModeSuffix } = window.TokenMonitorLimitDisplayMode;
+const trayTextApi = window.TokenMonitorTrayText;
 const i18n = window.TokenMonitorI18n;
 const currencyApi = window.TokenMonitorCurrency;
 const sessionRowsApi = window.TokenMonitorSessionRows;
@@ -1667,8 +1668,12 @@ function renderProviderWindows(provider, color) {
   if (provider.provider === 'codex') {
     const session = windowForKind(provider, 'session');
     const weekly = windowForKind(provider, 'weekly');
-    if (session) windows.append(limitWindowNode(session.label || 'Session', session, color, 0.95));
-    if (weekly) windows.append(limitWindowNode(weekly.label || 'Weekly', weekly, color, 0.68));
+    if (trayTextApi.limitWindowRemainingPercent(session) !== null) {
+      windows.append(limitWindowNode(session.label || 'Session', session, color, 0.95));
+    }
+    if (trayTextApi.limitWindowRemainingPercent(weekly) !== null) {
+      windows.append(limitWindowNode(weekly.label || 'Weekly', weekly, color, 0.68));
+    }
     const resetNode = codexResetCreditsNode(provider.resetCredits);
     if (resetNode) windows.append(resetNode);
   } else if (provider.provider === 'cursor') {
@@ -6320,22 +6325,7 @@ window.tokenMonitor.onStatsPush?.((payload) => {
 });
 
 function pickWorstProvider(stats, windowFilter) {
-  const providers = stats?.limits?.providers || [];
-  let worstProvider = null;
-  let worstRemaining = Infinity;
-  for (const provider of providers) {
-    if (provider.status !== 'ok' || provider.stale) continue;
-    for (const window of provider.windows || []) {
-      if (windowFilter && !windowFilter(window)) continue;
-      const remaining = Number(window.remainingPercent);
-      if (!Number.isFinite(remaining)) continue;
-      if (remaining < worstRemaining) {
-        worstRemaining = remaining;
-        worstProvider = provider;
-      }
-    }
-  }
-  return worstProvider;
+  return trayTextApi.pickWorstLimitProvider(stats, windowFilter);
 }
 
 function pickWorstSessionProvider(stats) {
@@ -6364,9 +6354,8 @@ function renderBarsIcon(stats, height = 44, picker = pickWorstProvider, colors =
   const fillColor = colors.fill || 'rgba(0, 0, 0, 1)';
   const provider = picker(stats);
   if (!provider) return null;
-  const session = (provider.windows || []).find((w) => w.kind === 'session');
-  const weekly = (provider.windows || []).find((w) => w.kind === 'weekly');
-  const billing = (provider.windows || []).find((w) => w.kind === 'billing');
+  const barPercents = trayTextApi.trayLimitBarPercents(provider);
+  if (barPercents.length === 0) return null;
   const providerImage = trayProviderImages[provider.provider];
   const { trayBarFillWidth, trayBarsLayout } = window.TokenMonitorTrayBars;
   const layout = trayBarsLayout(height);
@@ -6396,15 +6385,11 @@ function renderBarsIcon(stats, height = 44, picker = pickWorstProvider, colors =
     ctx.restore();
   }
 
-  if (session || weekly) {
-    drawBar(layout.barsStartY, Number(session?.remainingPercent));
-    drawBar(layout.barsStartY + layout.barHeight + layout.barGap, Number(weekly?.remainingPercent));
-  } else if (billing) {
-    // Billing-only providers (Grok Monthly) have no session/weekly pair — draw the
-    // single monthly bar on the top track and leave the bottom track empty, instead
-    // of painting two empty bars.
-    drawBar(layout.barsStartY, Number(billing.remainingPercent));
-  }
+  // Missing session/weekly windows are omitted, so a provider with only one real
+  // quota draws one track instead of a misleading zero-percent placeholder.
+  barPercents.slice(0, 2).forEach((remaining, index) => {
+    drawBar(layout.barsStartY + index * (layout.barHeight + layout.barGap), remaining);
+  });
   return canvas.toDataURL('image/png');
 }
 
@@ -6417,9 +6402,9 @@ function pickConfiguredSessionProviders(stats, configOrder) {
     for (const p of byId.get(id) || []) {
       if (!p || p.status !== 'ok' || p.stale) continue;
       const session = (p.windows || []).find((w) => w.kind === 'session');
-      const remaining = Number(session?.remainingPercent);
-      if (!session || !Number.isFinite(remaining)) continue;
-      if (!pick || remaining < Number(pick.session.remainingPercent)) pick = { provider: p, session };
+      const remaining = trayTextApi.limitWindowRemainingPercent(session);
+      if (!session || remaining === null) continue;
+      if (!pick || remaining < pick.remaining) pick = { provider: p, session, remaining };
     }
     if (!pick) continue;
     result.push(pick);

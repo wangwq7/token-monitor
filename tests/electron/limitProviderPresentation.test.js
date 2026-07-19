@@ -325,11 +325,20 @@ test('Codex limits render as one provider group with account subrows', () => {
   assert.match(styles, /\.limit-account-row\s*\{/);
 });
 
+test('Codex limit rows omit quota windows whose percentage is missing', () => {
+  const app = readRendererFile('app.js');
+  const renderProviderWindows = functionBody(app, 'renderProviderWindows', 'renderLimitProviderRow');
+
+  assert.match(renderProviderWindows, /trayTextApi\.limitWindowRemainingPercent\(session\) !== null/);
+  assert.match(renderProviderWindows, /trayTextApi\.limitWindowRemainingPercent\(weekly\) !== null/);
+});
+
 test('tray all-sessions mode can consider multiple providers for one configured id', () => {
   const app = readRendererFile('app.js');
   const pickConfigured = functionBody(app, 'pickConfiguredSessionProviders', 'renderAllSessionsIcon');
 
   assert.match(pickConfigured, /providersByLimitProviderId\(providers\)/);
+  assert.match(pickConfigured, /trayTextApi\.limitWindowRemainingPercent\(session\)/);
   assert.doesNotMatch(pickConfigured, /new Map\(providers\.map\(\(p\) => \[String\(p\.provider\)\.toLowerCase\(\), p\]\)\)/);
 });
 
@@ -511,10 +520,20 @@ test('tray bars draw the billing window for a billing-only provider instead of t
   const app = readRendererFile('app.js');
   const renderBarsIcon = functionBody(app, 'renderBarsIcon', 'renderAllSessionsIcon');
 
-  assert.match(renderBarsIcon, /w\.kind === 'billing'/);
-  assert.match(renderBarsIcon, /if \(session \|\| weekly\)/);
-  assert.match(renderBarsIcon, /} else if \(billing\)/);
-  assert.match(renderBarsIcon, /drawBar\(layout\.barsStartY, Number\(billing\.remainingPercent\)\)/);
+  assert.match(renderBarsIcon, /trayTextApi\.trayLimitBarPercents\(provider\)/);
+  assert.match(renderBarsIcon, /barPercents\.slice\(0, 2\)\.forEach/);
+});
+
+test('tray bars omit missing quota windows instead of painting zero-percent tracks', () => {
+  const app = readRendererFile('app.js');
+  const pickWorst = functionBody(app, 'pickWorstProvider', 'pickWorstSessionProvider');
+  const renderBarsIcon = functionBody(app, 'renderBarsIcon', 'pickConfiguredSessionProviders');
+
+  assert.match(pickWorst, /trayTextApi\.pickWorstLimitProvider\(stats, windowFilter\)/);
+  assert.match(renderBarsIcon, /trayTextApi\.trayLimitBarPercents\(provider\)/);
+  assert.match(renderBarsIcon, /if \(barPercents\.length === 0\) return null/);
+  assert.match(renderBarsIcon, /barPercents\.slice\(0, 2\)\.forEach/);
+  assert.doesNotMatch(renderBarsIcon, /Number\(session\?\.remainingPercent\)/);
 });
 
 test('DeepSeek main Limits row uses a balance meter without since-tracking copy', () => {
