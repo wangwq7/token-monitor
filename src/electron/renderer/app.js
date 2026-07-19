@@ -6356,9 +6356,10 @@ function renderBarsIcon(stats, height = 44, picker = pickWorstProvider, colors =
   if (!provider) return null;
   const barPercents = trayTextApi.trayLimitBarPercents(provider);
   if (barPercents.length === 0) return null;
+  const visibleBarPercents = barPercents.slice(0, 2);
   const providerImage = trayProviderImages[provider.provider];
   const { trayBarFillWidth, trayBarsLayout } = window.TokenMonitorTrayBars;
-  const layout = trayBarsLayout(height);
+  const layout = trayBarsLayout(height, { barCount: visibleBarPercents.length });
 
   const canvas = document.createElement('canvas');
   canvas.width = layout.width;
@@ -6387,7 +6388,7 @@ function renderBarsIcon(stats, height = 44, picker = pickWorstProvider, colors =
 
   // Missing session/weekly windows are omitted, so a provider with only one real
   // quota draws one track instead of a misleading zero-percent placeholder.
-  barPercents.slice(0, 2).forEach((remaining, index) => {
+  visibleBarPercents.forEach((remaining, index) => {
     drawBar(layout.barsStartY + index * (layout.barHeight + layout.barGap), remaining);
   });
   return canvas.toDataURL('image/png');

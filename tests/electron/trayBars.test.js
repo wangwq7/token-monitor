@@ -48,3 +48,8 @@ test('trayBarsLayout can fit the canvas to the compact bars only', () => {
     radius: 4.5
   });
 });
+
+test('trayBarsLayout vertically centers a single available quota bar', () => {
+  assert.equal(trayBarsLayout(36, { barCount: 1 }).barsStartY, 14);
+  assert.equal(trayBarsLayout(44, { barCount: 1 }).barsStartY, 17);
+});

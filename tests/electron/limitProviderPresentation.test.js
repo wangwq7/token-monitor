@@ -521,7 +521,8 @@ test('tray bars draw the billing window for a billing-only provider instead of t
   const renderBarsIcon = functionBody(app, 'renderBarsIcon', 'renderAllSessionsIcon');
 
   assert.match(renderBarsIcon, /trayTextApi\.trayLimitBarPercents\(provider\)/);
-  assert.match(renderBarsIcon, /barPercents\.slice\(0, 2\)\.forEach/);
+  assert.match(renderBarsIcon, /const visibleBarPercents = barPercents\.slice\(0, 2\)/);
+  assert.match(renderBarsIcon, /trayBarsLayout\(height, \{ barCount: visibleBarPercents\.length \}\)/);
 });
 
 test('tray bars omit missing quota windows instead of painting zero-percent tracks', () => {
@@ -532,7 +533,9 @@ test('tray bars omit missing quota windows instead of painting zero-percent trac
   assert.match(pickWorst, /trayTextApi\.pickWorstLimitProvider\(stats, windowFilter\)/);
   assert.match(renderBarsIcon, /trayTextApi\.trayLimitBarPercents\(provider\)/);
   assert.match(renderBarsIcon, /if \(barPercents\.length === 0\) return null/);
-  assert.match(renderBarsIcon, /barPercents\.slice\(0, 2\)\.forEach/);
+  assert.match(renderBarsIcon, /const visibleBarPercents = barPercents\.slice\(0, 2\)/);
+  assert.match(renderBarsIcon, /trayBarsLayout\(height, \{ barCount: visibleBarPercents\.length \}\)/);
+  assert.match(renderBarsIcon, /visibleBarPercents\.forEach/);
   assert.doesNotMatch(renderBarsIcon, /Number\(session\?\.remainingPercent\)/);
 });
 

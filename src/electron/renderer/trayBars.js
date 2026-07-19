@@ -23,6 +23,7 @@
     const h = Math.max(16, Math.round(finiteNumber(height, 36)));
     const fullWidth = Math.round(h * 2.06);
     const contentOnly = options?.contentOnly === true;
+    const barCount = Math.max(1, Math.min(2, Math.round(finiteNumber(options?.barCount, 2))));
     const padX = 0;
     const iconSize = contentOnly ? 0 : Math.round(h * 1);
     const iconY = contentOnly ? 0 : Math.round((h - iconSize) / 2);
@@ -33,7 +34,7 @@
     const barsX = contentOnly ? 0 : fullBarsX;
     const barHeight = Math.round(h * 0.24);
     const barGap = Math.round(h * 0.13);
-    const totalBarsH = barHeight * 2 + barGap;
+    const totalBarsH = barHeight * barCount + barGap * (barCount - 1);
     const barsStartY = Math.round((h - totalBarsH) / 2);
     return {
       width,
